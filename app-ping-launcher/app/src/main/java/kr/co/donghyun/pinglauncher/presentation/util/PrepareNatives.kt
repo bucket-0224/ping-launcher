@@ -1,0 +1,56 @@
+package kr.co.donghyun.pinglauncher.presentation.util
+
+import android.content.Context
+import android.content.pm.ApplicationInfo
+import java.io.File
+
+class PrepareNatives {
+    companion object {
+        fun prepareNatives(applicationContext : Context, applicationInfo : ApplicationInfo) {
+            val nativesDir = File(applicationContext.filesDir, "natives")
+            if (nativesDir.exists()) nativesDir.deleteRecursively()
+            nativesDir.mkdirs()
+            val apkLibDir = File(applicationInfo.nativeLibraryDir)
+            apkLibDir.listFiles()?.forEach { soFile ->
+                soFile.copyTo(File(nativesDir, soFile.name), overwrite = true)
+                File(nativesDir, soFile.name).setExecutable(true, false)
+            }
+            val apkPath = applicationInfo.sourceDir
+            java.util.zip.ZipFile(apkPath).use { zip ->
+                zip.entries().asSequence()
+                    .filter { it.name.startsWith("lib/arm64-v8a/") && it.name.endsWith(".so") }
+                    .forEach { entry ->
+                        val fileName = entry.name.substringAfterLast("/")
+                        val dest = File(nativesDir, fileName)
+                        if (!dest.exists()) {
+                            zip.getInputStream(entry).use { input ->
+                                dest.outputStream().use { input.copyTo(it) }
+                            }
+                            dest.setExecutable(true, false)
+                        }
+                    }
+            }
+        }
+
+        fun copyLwjglJar(applicationContext : Context) {
+            val dest = File(applicationContext.filesDir, "lwjgl3/lwjgl-glfw-classes.jar")
+            dest.parentFile?.mkdirs()
+            applicationContext.assets.open("lwjgl-glfw-classes.jar").use { input ->
+                dest.outputStream().use { input.copyTo(it) }
+            }
+        }
+
+        fun prePopulateLwjgl(versionId: String, applicationContext : Context) {
+            val nativesDir = File(applicationContext.filesDir, "natives")
+            listOf("3.2.1", "3.2.2", "3.2.1-build-12", "3.2.2-build-12", "3.3.3", "3.3.3-snapshot").forEach { version ->
+                val lwjglDir = File(applicationContext.getExternalFilesDir(null), "mc_$versionId/.lwjgl/$version")
+                if (lwjglDir.exists()) lwjglDir.deleteRecursively()
+                lwjglDir.mkdirs()
+                nativesDir.listFiles()?.forEach { soFile ->
+                    soFile.copyTo(File(lwjglDir, soFile.name), overwrite = true)
+                    File(lwjglDir, soFile.name).setExecutable(true, false)
+                }
+            }
+        }
+    }
+}
