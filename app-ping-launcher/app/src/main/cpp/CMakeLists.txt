@@ -7,16 +7,17 @@ add_library(pingjvm SHARED pingjvm.cpp)
 find_library(log-lib log)
 target_link_libraries(pingjvm ${log-lib})
 
-# ── libglfw.so (egl_bridge 기반) ──────────────────────────────
-add_library(glfw SHARED
+
+# ── PojavLauncher 공통 소스 ─────────────────────────────────────
+set(POJAV_SOURCES
         pojav_jni/egl_bridge.c
         pojav_jni/utils.c
         pojav_jni/stdio_is.c
         pojav_jni/bigcoreaffinity.c
         pojav_jni/input_bridge_v3.c
         pojav_jni/environ/environ.c
-        pojav_jni/ctxbridges/gl_bridge.c       # ✅ 추가
-        pojav_jni/ctxbridges/egl_loader.c      # ✅ 추가
+        pojav_jni/ctxbridges/gl_bridge.c
+        pojav_jni/ctxbridges/egl_loader.c
         pojav_jni/ctxbridges/osm_bridge.c
         pojav_jni/ctxbridges/osmesa_loader.c
         pojav_jni/ctxbridges/loader_dlopen.c
@@ -30,13 +31,7 @@ add_library(glfw SHARED
         pojav_jni/jre_launcher.c
 )
 
-find_library(log-lib log)
-find_library(EGL-lib EGL)
-find_library(GLESv2-lib GLESv2)
-find_library(android-lib android)
-find_library(dl-lib dl)
-
-target_include_directories(glfw PRIVATE
+set(POJAV_INCLUDES
         pojav_jni
         pojav_jni/GL
         pojav_jni/ctxbridges
@@ -47,7 +42,33 @@ target_include_directories(glfw PRIVATE
         pojav_jni/awt_xawt
 )
 
+
+find_library(log-lib log)
+find_library(EGL-lib EGL)
+find_library(GLESv2-lib GLESv2)
+find_library(android-lib android)
+find_library(dl-lib dl)
+
+
+# ── libglfw.so (자바측 System.loadLibrary("glfw") 가 로드) ──────
+add_library(glfw SHARED ${POJAV_SOURCES})
+target_include_directories(glfw PRIVATE ${POJAV_INCLUDES})
 target_link_libraries(glfw
+        ${log-lib}
+        ${EGL-lib}
+        ${GLESv2-lib}
+        ${android-lib}
+        ${dl-lib}
+        android
+)
+
+
+# ── libpojavexec.so (자체 또는 dlopen 으로 로드되는 PojavLauncher core) ──
+# 같은 소스를 사용하므로 우리 패치(PATCH_V4_ACTIVE 등)가 양쪽에 모두 들어감.
+# 어디서 호출하든 패치 코드 실행.
+add_library(pojavexec SHARED ${POJAV_SOURCES})
+target_include_directories(pojavexec PRIVATE ${POJAV_INCLUDES})
+target_link_libraries(pojavexec
         ${log-lib}
         ${EGL-lib}
         ${GLESv2-lib}

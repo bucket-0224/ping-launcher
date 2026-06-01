@@ -16,6 +16,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import kr.co.donghyun.pinglauncher.data.auth.MicrosoftAuthManager
 import kr.co.donghyun.pinglauncher.data.jvm.JvmSettingsManager
+import kr.co.donghyun.pinglauncher.data.renderer.RendererManager
 import kr.co.donghyun.pinglauncher.presentation.base.BaseActivity
 import kr.co.donghyun.pinglauncher.presentation.ui.components.GameControllerOverlay
 import kr.co.donghyun.pinglauncher.presentation.ui.components.GameControllerView
@@ -57,6 +58,7 @@ class MinecraftActivity : BaseActivity() {
         private const val EXTRA_GAME_DIR = "game_dir"
         private const val EXTRA_INSTANCE_DIR = "instance_dir"
 
+        @JvmStatic
         var currentInstance: MinecraftActivity? = null
 
         fun start(
@@ -532,8 +534,16 @@ class MinecraftActivity : BaseActivity() {
                 || instanceMeta?.loaderType == "fabric"
         Log.d("PING_LAUNCHER", "isFabric=$isFabric, loaderType=${instanceMeta?.loaderType}, mainClass=$mainClass")
 
-        File(base, "lwjgl3/lwjgl-glfw-classes.jar").takeIf { it.exists() }
-            ?.let { jarList.add(it.absolutePath) }
+        // PojavLauncher 패치 LWJGL은 모든 MC 버전에 필요 (libglfw.so가 pojavInit 라우팅을 가정함)
+        copyLwjglJars(base)
+        val lwjgl3Dir = File(base, "lwjgl3")
+        lwjgl3Dir.listFiles()
+            ?.filter { it.extension == "jar" }
+            ?.sortedBy { it.name }   // lwjgl-3.3.3.jar(core)가 먼저 오도록
+            ?.forEach { jar ->
+                jarList.add(jar.absolutePath)
+                Log.d("PING_LAUNCHER", "🔧 LWJGL jar 주입: ${jar.name}")
+            }
 
         jarList.addAll(0, extraJars)
 
@@ -551,7 +561,6 @@ class MinecraftActivity : BaseActivity() {
                 if (ga != null) { seenGA.add(ga); break }
             }
         }
-
         searchDirs.forEach { dir ->
             val librariesDir = File(dir, "libraries")
             if (librariesDir.exists()) {
@@ -559,6 +568,18 @@ class MinecraftActivity : BaseActivity() {
                     if (!f.isFile || f.extension != "jar") return@forEach
                     if (f.name.contains("natives-linux")) return@forEach
                     if (jarList.contains(f.absolutePath)) return@forEach
+
+                    // 마인크래프트 번들 LWJGL은 PojavLauncher 패치 버전과 충돌하므로 제외
+                    // PojavLauncher 패치 GLFW만 제외. core/opengl/openal 등 다른 LWJGL 모듈은
+                    // 1.14 번들 그대로 쓰는 게 호환성 안전.
+                    val lowerName = f.name.lowercase()
+                        // MC 번들 LWJGL은 모두 제외 (lwjgl-3.x.jar, lwjgl-glfw-3.x.jar, lwjgl-opengl-3.x.jar, ...)
+                        // PojavLauncher patched 3.3.3 풀 패키지를 위에서 주입했으므로 버전 충돌 방지
+                    val lwjglBundlePattern = Regex("^lwjgl(-[a-z]+)?-\\d.*\\.jar$")
+                    if (lwjglBundlePattern.matches(lowerName)) {
+                        Log.d("PING_LAUNCHER", "번들 LWJGL 제외 (PojavLauncher 3.3.3 사용): ${f.name}")
+                        return@forEach
+                    }
 
                     val ga = gaKey(f.absolutePath, librariesDir.absolutePath)
                     if (ga != null && seenGA.contains(ga)) {
@@ -569,12 +590,21 @@ class MinecraftActivity : BaseActivity() {
                     jarList.add(f.absolutePath)
                 }
             }
+
             val legacyDir = File(dir, "libraries_$versionId")
             if (legacyDir.exists()) {
                 legacyDir.walkTopDown().forEach { f ->
                     if (!f.isFile || f.extension != "jar") return@forEach
                     if (f.name.contains("natives-linux")) return@forEach
                     if (jarList.contains(f.absolutePath)) return@forEach
+
+                    val lowerName = f.name.lowercase()
+                    // GLFW만 PojavLauncher stub으로 대체. core/opengl/openal/stb 등은 MC 번들 유지.
+                    val lwjglPattern = Regex("lwjgl(-[a-z]+)?-\\d.*\\.jar")
+                    if (lwjglPattern.matches(lowerName)) {
+                        Log.d("PING_LAUNCHER", "번들 LWJGL 제외 (PojavLauncher patched 사용): ${f.name}")
+                        return@forEach
+                    }
 
                     val ga = gaKey(f.absolutePath, legacyDir.absolutePath)
                     if (ga != null && seenGA.contains(ga)) {
@@ -730,7 +760,17 @@ class MinecraftActivity : BaseActivity() {
                     baseMcArgs + metaGameArgs
                 }
 
-                JavaNativeLauncher().bootMinecraftJVM(libJvmPath, jvmArgs, mcArgs)
+                val launcher = JavaNativeLauncher()
+                val renderer = RendererManager.load(this@MinecraftActivity)
+                val rendererEnv = renderer.buildEnv(
+                    cacheDir = applicationContext.cacheDir.absolutePath,
+                    nativeDir = applicationInfo.nativeLibraryDir
+                )
+                Log.d("PING_LAUNCHER", "🎨 적용된 렌더러: ${renderer.displayName}")
+                rendererEnv.forEach { (k, v) -> Log.d("PING_LAUNCHER", "  env $k=$v") }
+                launcher.applyEnv(rendererEnv)
+
+                launcher.bootMinecraftJVM(libJvmPath, jvmArgs, mcArgs)
             } catch (e: Exception) {
                 Log.e("PING_LAUNCHER", "MC 실행 예외: ${e.message}")
             } finally {
@@ -805,6 +845,24 @@ class MinecraftActivity : BaseActivity() {
         android.view.KeyEvent.KEYCODE_8 -> 56
         android.view.KeyEvent.KEYCODE_9 -> 57
         else -> null
+    }
+
+    private fun copyLwjglJars(base: File) {
+        val targetDir = File(base, "lwjgl3").apply { mkdirs() }
+        try {
+            val jarNames = assets.list("lwjgl3") ?: return
+            for (jarName in jarNames) {
+                if (!jarName.endsWith(".jar")) continue
+                val target = java.io.File(targetDir, jarName)
+                if (target.exists() && target.length() > 0) continue
+                assets.open("lwjgl3/$jarName").use { input ->
+                    target.outputStream().use { output -> input.copyTo(output) }
+                }
+                Log.d("PING_LAUNCHER", "📦 LWJGL jar 추출: $jarName (${target.length()} bytes)")
+            }
+        } catch (e: Exception) {
+            Log.e("PING_LAUNCHER", "LWJGL jar 추출 실패", e)
+        }
     }
 
 

@@ -103,6 +103,66 @@ static void installGrabbingHook() {
     LOGI("✅ nativeSetGrabbing 후킹 완료");
 }
 
+static void registerGLFWGamepadNative(JNIEnv* customEnv) {
+    LOGI("🎯 GLFW.internalGetGamepadDataPointer RegisterNatives 시도");
+
+    jclass glfwClass = customEnv->FindClass("org/lwjgl/glfw/GLFW");
+    if (customEnv->ExceptionCheck()) {
+        LOGE("  FindClass 중 예외 발생");
+        customEnv->ExceptionClear();
+    }
+    if (glfwClass == nullptr) {
+        LOGE("  ❌ org/lwjgl/glfw/GLFW 클래스 못 찾음 (아직 classpath에 미로드)");
+        return;
+    }
+    LOGI("  ✅ GLFW 클래스 찾음");
+
+    // 우리가 빌드한 libglfw.so 우선, 그 다음 libpojavexec.so 폴백
+    const char* libCandidates[] = { "libglfw.so", "libpojavexec.so", nullptr };
+    void* fn = nullptr;
+    for (int i = 0; libCandidates[i]; i++) {
+        void* h = dlopen(libCandidates[i], RTLD_NOLOAD | RTLD_NOW);
+        if (!h) {
+            LOGI("  %s 로드 안 되어 있음 — 다음 후보 시도", libCandidates[i]);
+            continue;
+        }
+        fn = dlsym(h, "Java_org_lwjgl_glfw_GLFW_internalGetGamepadDataPointer");
+        if (fn) {
+            LOGI("  ✅ 심볼 발견 in %s: %p", libCandidates[i], fn);
+            break;
+        }
+        LOGI("  %s 안에 심볼 없음", libCandidates[i]);
+    }
+
+    if (!fn) {
+        // 마지막 시도: 현재 프로세스 전체 심볼 테이블에서 검색
+        fn = dlsym(RTLD_DEFAULT, "Java_org_lwjgl_glfw_GLFW_internalGetGamepadDataPointer");
+        if (fn) {
+            LOGI("  ✅ RTLD_DEFAULT에서 심볼 발견: %p", fn);
+        } else {
+            LOGE("  ❌ 어디에서도 심볼 못 찾음");
+            customEnv->DeleteLocalRef(glfwClass);
+            return;
+        }
+    }
+
+    JNINativeMethod m[] = {
+            { (char*)"internalGetGamepadDataPointer", (char*)"()J", fn }
+    };
+    jint r = customEnv->RegisterNatives(glfwClass, m, 1);
+    if (r != 0 || customEnv->ExceptionCheck()) {
+        LOGE("  ❌ RegisterNatives 실패: %d", r);
+        if (customEnv->ExceptionCheck()) {
+            customEnv->ExceptionDescribe();
+            customEnv->ExceptionClear();
+        }
+    } else {
+        LOGI("  ✅ RegisterNatives 성공");
+    }
+
+    customEnv->DeleteLocalRef(glfwClass);
+}
+
 // libpojavexec.so가 이 함수를 JNI로 호출함
 // 우리가 먼저 등록하면 intercept 가능
 extern "C" JNIEXPORT void JNICALL
@@ -206,18 +266,31 @@ static void printJavaException(JNIEnv* env, jthrowable ex, int depth) {
     env->DeleteLocalRef(exClass);
 }
 
+extern "C" JNIEXPORT void JNICALL
+Java_kr_co_donghyun_pinglauncher_presentation_util_jni_JavaNativeLauncher_nativeSetEnv(
+        JNIEnv* env, jobject thiz, jstring key, jstring value) {
+    const char* k = env->GetStringUTFChars(key, nullptr);
+    const char* v = env->GetStringUTFChars(value, nullptr);
+    setenv(k, v, 1);
+    LOGI("setenv: %s=%s", k, v);
+    env->ReleaseStringUTFChars(key, k);
+    env->ReleaseStringUTFChars(value, v);
+}
+
 extern "C" JNIEXPORT jint JNICALL
 Java_kr_co_donghyun_pinglauncher_presentation_util_jni_JavaNativeLauncher_bootMinecraftJVM(
         JNIEnv* env, jobject thiz, jstring lib_jvm_path, jobjectArray jvm_args, jobjectArray mc_args) {
 
-    setenv("POJAV_RENDERER", "vulkan_zink", 1);
-    setenv("MESA_GLSL_CACHE_DIR", "/data/data/kr.co.donghyun.pinglauncher/cache", 1);
-    setenv("LIBGL_STRING", "VulkanGL", 1);
-    setenv("LIBGL_NAME", "libltw.so", 1);
-    setenv("DLOPEN", "libltw.so", 1);
-    setenv("MESA_GLSL_CACHE_DIR", "/data/data/kr.co.donghyun.pinglauncher/cache", 1);
-    setenv("FORCE_VSYNC", "false", 1);
-    setenv("POJAV_VSYNC", "1", 1);
+    if (!getenv("POJAV_RENDERER"))  setenv("POJAV_RENDERER",  "vulkan_zink", 0);
+    if (!getenv("LIBGL_STRING"))    setenv("LIBGL_STRING",    "VulkanGL",    0);
+    if (!getenv("LIBGL_NAME"))      setenv("LIBGL_NAME",      "libltw.so",   0);
+    if (!getenv("DLOPEN"))          setenv("DLOPEN",          "libltw.so",   0);
+    if (!getenv("LIBGL_ES"))        setenv("LIBGL_ES",        "3",           0);
+    if (!getenv("FORCE_VSYNC"))     setenv("FORCE_VSYNC",     "false",       0);
+    if (!getenv("POJAV_VSYNC"))     setenv("POJAV_VSYNC",     "1",           0);
+
+    LOGI("🎨 Renderer env at boot: POJAV_RENDERER=%s, LIBGL_NAME=%s, LIBGL_ES=%s",
+         getenv("POJAV_RENDERER"), getenv("LIBGL_NAME"), getenv("LIBGL_ES"));
 
 
     // =========================================================================
@@ -326,7 +399,8 @@ Java_kr_co_donghyun_pinglauncher_presentation_util_jni_JavaNativeLauncher_bootMi
         return -3;
     }
     LOGI("내장 JVM 부팅 성공!");
-    installGrabbingHook();  // ← 추가
+    installGrabbingHook();
+    registerGLFWGamepadNative(customEnv);  // ← 이 줄 추가
 
     // ==========================================================
     // 🔥 [핵심 수정 구간] 이제부터는 무조건 customEnv만 사용해야 합니다!

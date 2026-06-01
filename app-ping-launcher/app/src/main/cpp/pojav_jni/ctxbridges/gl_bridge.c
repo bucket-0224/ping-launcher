@@ -77,7 +77,8 @@ gl_render_window_t* gl_init_context(gl_render_window_t *share) {
 
     {
         EGLBoolean bindResult;
-        if (strncmp(getenv("POJAV_RENDERER"), "opengles3_desktopgl", 19) == 0) {
+        const char* renderer = getenv("POJAV_RENDERER");
+        if (renderer && strncmp(renderer, "opengles3_desktopgl", 19) == 0) {
             printf("EGLBridge: Binding to desktop OpenGL\n");
             bindResult = eglBindAPI_p(EGL_OPENGL_API);
         } else {
@@ -87,8 +88,9 @@ gl_render_window_t* gl_init_context(gl_render_window_t *share) {
         if (!bindResult) printf("EGLBridge: bind failed: %p\n", eglGetError_p());
     }
 
-    int libgl_es = strtol(getenv("LIBGL_ES"), NULL, 0);
-    if(libgl_es < 0 || libgl_es > INT16_MAX) libgl_es = 2;
+    const char* libgl_es_env = getenv("LIBGL_ES");
+    int libgl_es = libgl_es_env ? strtol(libgl_es_env, NULL, 0) : 2;
+    if (libgl_es < 0 || libgl_es > INT16_MAX) libgl_es = 2;
     const EGLint egl_context_attributes[] = { EGL_CONTEXT_CLIENT_VERSION, libgl_es, EGL_NONE };
     bundle->context = eglCreateContext_p(g_EglDisplay, bundle->config, share == NULL ? EGL_NO_CONTEXT : share->context, egl_context_attributes);
 
@@ -122,8 +124,17 @@ void gl_swap_surface(gl_render_window_t* bundle) {
 }
 
 void gl_make_current(gl_render_window_t* bundle) {
+    LOGI("##### PATCH_V4_ACTIVE ##### bundle=%p currentBundle=%p", bundle, currentBundle);
 
     if(bundle == NULL) {
+        // [진단 가드] 첫 attach 후에 들어오는 NULL detach 호출을 무시.
+        // PojavLauncher patched GLFW가 glfwCreateWindow 내부 셋업 직후
+        // detach 호출을 보내는데, 우리 환경에선 그 다음 reattach가 안 일어나
+        // GL.createCapabilities() 시점에 context가 사라진 상태가 됨.
+        if (currentBundle != NULL) {
+            LOGI("gl_bridge: ignoring makeCurrent(NULL) — preserving active context (currentBundle=%p)", currentBundle);
+            return;
+        }
         if(eglMakeCurrent_p(g_EglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT)) {
             currentBundle = NULL;
         }
@@ -137,10 +148,24 @@ void gl_make_current(gl_render_window_t* bundle) {
         hasSetMainWindow = true;
     }
     LOGI("Making current, surface=%p, nativeSurface=%p, newNativeSurface=%p", bundle->surface, bundle->nativeSurface, bundle->newNativeSurface);
+
+    // [진단 가드 2] 이미 같은 bundle이 current이고 surface도 그대로면 재attach 생략.
+    // patched GLFW가 같은 window에 대해 makeCurrent를 반복 호출하는 경우 보호.
+    if (currentBundle == bundle && bundle->surface != NULL && bundle->newNativeSurface == NULL) {
+        LOGI("gl_bridge: bundle already current and no new surface — skipping redundant makeCurrent");
+        return;
+    }
+
     if(bundle->surface == NULL) { //it likely will be on the first run
         gl_swap_surface(bundle);
     }
-    if(eglMakeCurrent_p(g_EglDisplay, bundle->surface, bundle->surface, bundle->context)) {
+    EGLBoolean mc_result = eglMakeCurrent_p(g_EglDisplay, bundle->surface, bundle->surface, bundle->context);
+    EGLint mc_error = eglGetError_p();
+    EGLContext mc_check = eglGetCurrentContext_p ? eglGetCurrentContext_p() : EGL_NO_CONTEXT;
+    LOGI("eglMakeCurrent result=%d error=0x%04x currentContext=%p expected=%p",
+         mc_result, mc_error, mc_check, bundle->context);
+
+    if(mc_result) {
         currentBundle = bundle;
     }else {
         if(hasSetMainWindow) {
@@ -148,9 +173,8 @@ void gl_make_current(gl_render_window_t* bundle) {
             gl_swap_surface((gl_render_window_t*)pojav_environ->mainWindowBundle);
             pojav_environ->mainWindowBundle = NULL;
         }
-        LOGE("eglMakeCurrent returned with error: %04x", eglGetError_p());
+        LOGE("eglMakeCurrent returned with error: %04x", mc_error);
     }
-
 }
 
 void gl_swap_buffers() {

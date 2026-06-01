@@ -57,6 +57,7 @@ fun MainScreen(
     onOpenContents: () -> Unit,
     onOpenKeySettings: () -> Unit,
     onOpenJVMSettings: () -> Unit,
+    onOpenRendererSettings: () -> Unit,
     uuid: String?,
     isLoggedIn: Boolean,        // ← 추가
     username: String?,          // ← 추가
@@ -92,6 +93,7 @@ fun MainScreen(
                 onOpenContents = onOpenContents,
                 onOpenKeySettings = onOpenKeySettings,
                 onOpenJVMSettings = onOpenJVMSettings,
+                onOpenRendererSettings = onOpenRendererSettings
             )
 
             // 필터
@@ -193,7 +195,9 @@ fun ProfileHeader(
     onOpenContents: () -> Unit,
     onOpenKeySettings: () -> Unit,
     onOpenJVMSettings: () -> Unit,
-) {
+    onOpenRendererSettings: () -> Unit,
+
+    ) {
     // 스킨 얼굴 이미지 로드
     var skinFace by remember { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(uuid) {
@@ -298,6 +302,7 @@ fun ProfileHeader(
                 listOf(
                     "📦 추가 컨텐츠" to onOpenContents,
                     "🎮 키 설정" to onOpenKeySettings,
+                    "🎨 렌더러" to onOpenRendererSettings,
                     "⚙️ JVM" to onOpenJVMSettings,
                 ).forEach { (label, action) ->
                     Box(

@@ -88,6 +88,7 @@ class MainActivity : BaseActivity() {
                     onOpenContents = { ModPackBrowserActivity.start(this@MainActivity) },
                     onOpenKeySettings = { KeyboardLayoutEditorActivity.start(this@MainActivity) },
                     onOpenJVMSettings = { JvmSettingsActivity.start(this@MainActivity) },
+                    onOpenRendererSettings = { RendererSettingsActivity.start(this@MainActivity) },
                     uuid = MicrosoftAuthManager.loadSession(this@MainActivity)?.uuid,
                     isLoggedIn = isLoggedIn,
                     username = username,
@@ -219,7 +220,7 @@ class MainActivity : BaseActivity() {
     private fun copyLwjglJarFromAssets(baseDir: File) {
         val dest = File(baseDir, "lwjgl3/lwjgl-glfw-classes.jar")
         dest.parentFile?.mkdirs()
-        assets.open("lwjgl-glfw-classes.jar").use { input ->
+        assets.open("lwjgl3/lwjgl-glfw-classes.jar").use { input ->
             dest.outputStream().use { input.copyTo(it) }
         }
     }

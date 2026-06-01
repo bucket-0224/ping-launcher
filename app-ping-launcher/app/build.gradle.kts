@@ -71,7 +71,7 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
 
-    implementation(files("src/main/assets/lwjgl-glfw-classes.jar"))
+    implementation(files("src/main/assets/lwjgl3/lwjgl-glfw-classes.jar"))
 
     implementation(libs.okhttp)
     implementation(libs.gson)

@@ -97,7 +97,7 @@ EXTERNAL_API void* pojavGetCurrentContext() {
     return br_get_current();
 }
 
-//#define ADRENO_POSSIBLE
+#define ADRENO_POSSIBLE
 #ifdef ADRENO_POSSIBLE
 void* load_turnip_vulkan() {
     if(getenv("POJAV_LOAD_TURNIP") == NULL) return NULL;
@@ -158,22 +158,37 @@ void load_vulkan() {
 int pojavInitOpenGL() {
     // Only affects GL4ES as of now
     const char *forceVsync = getenv("FORCE_VSYNC");
-    if (strcmp(forceVsync, "true") == 0)
+    if (forceVsync && strcmp(forceVsync, "true") == 0)
         pojav_environ->force_vsync = true;
 
-    // NOTE: Override for now.
     const char *renderer = getenv("POJAV_RENDERER");
+    if (!renderer) {
+        printf("POJAV_RENDERER not set! defaulting to vulkan_zink\n");
+        renderer = "vulkan_zink";
+    }
+    printf("OpenGL: renderer = %s\n", renderer);
+
     if (strncmp("opengles", renderer, 8) == 0) {
         pojav_environ->config_renderer = RENDERER_GL4ES;
         set_gl_bridge_tbl();
     } else if (strcmp(renderer, "vulkan_zink") == 0) {
         pojav_environ->config_renderer = RENDERER_VK_ZINK;
         load_vulkan();
-        setenv("GALLIUM_DRIVER","zink",1);
+        setenv("GALLIUM_DRIVER", "zink", 1);
+        // zink가 OpenGL 4.6 보고하게 강제
+        if (!getenv("MESA_GL_VERSION_OVERRIDE"))     setenv("MESA_GL_VERSION_OVERRIDE", "4.6", 1);
+        if (!getenv("MESA_GLSL_VERSION_OVERRIDE"))   setenv("MESA_GLSL_VERSION_OVERRIDE", "460", 1);
+        if (!getenv("force_glsl_extensions_warn"))   setenv("force_glsl_extensions_warn", "true", 1);
+        if (!getenv("allow_higher_compat_version"))  setenv("allow_higher_compat_version", "true", 1);
+        if (!getenv("allow_glsl_extension_directive_midshader")) setenv("allow_glsl_extension_directive_midshader", "true", 1);
+        if (!getenv("MESA_LOADER_DRIVER_OVERRIDE"))  setenv("MESA_LOADER_DRIVER_OVERRIDE", "zink", 1);
         set_osm_bridge_tbl();
-    }
-    if(br_init()) {
-        br_setup_window();
+    } else {
+        printf("Unknown renderer '%s', defaulting to vulkan_zink\n", renderer);
+        pojav_environ->config_renderer = RENDERER_VK_ZINK;
+        load_vulkan();
+        setenv("GALLIUM_DRIVER", "zink", 1);
+        set_osm_bridge_tbl();
     }
     return 0;
 }
