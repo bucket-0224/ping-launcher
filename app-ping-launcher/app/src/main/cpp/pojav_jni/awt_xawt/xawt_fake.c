@@ -210,6 +210,33 @@ Java_sun_awt_UNIXToolkit_unload_1gtk(JNIEnv *env, jclass klass)
     return JNI_FALSE;
 }
 
+// ============================================================
+// X11FontScaler stubs
+// libfontmanager.so가 X11FontScaler.c와 함께 빌드되어 17개 AWT*
+// 심볼을 undefined로 export한다. Caciocavallo + FreeType 경로에서는
+// 실제로 호출되지 않지만, dlopen(RTLD_NOW) 시점에 심볼 resolution을
+// 통과시키려면 존재해야 한다. 호출되면 안 되니까 노옵이 안전.
+// ============================================================
+
+JNIEXPORT int      JNICALL AWTCountFonts(void* xlfd)                                { return 0; }
+JNIEXPORT void     JNICALL AWTLoadFont(void* name, void* pReturn)                   {}
+JNIEXPORT void     JNICALL AWTFreeFont(void* font)                                  {}
+JNIEXPORT unsigned JNICALL AWTFontMinByte1(void* font)                              { return 0; }
+JNIEXPORT unsigned JNICALL AWTFontMaxByte1(void* font)                              { return 0; }
+JNIEXPORT unsigned JNICALL AWTFontMinCharOrByte2(void* font)                        { return 0; }
+JNIEXPORT unsigned JNICALL AWTFontMaxCharOrByte2(void* font)                        { return 0; }
+JNIEXPORT unsigned JNICALL AWTFontDefaultChar(void* font)                           { return 0; }
+JNIEXPORT void*    JNICALL AWTFontPerChar(void* font, int index)                    { return 0; }
+JNIEXPORT void*    JNICALL AWTFontMaxBounds(void* font)                             { return 0; }
+JNIEXPORT int      JNICALL AWTFontAscent(void* font)                                { return 0; }
+JNIEXPORT int      JNICALL AWTFontDescent(void* font)                               { return 0; }
+JNIEXPORT void     JNICALL AWTFontTextExtents16(void* a, void* b, int c,
+                                                void* d, void* e, void* f, void* g) {}
+JNIEXPORT void     JNICALL AWTDrawGlyphList(void* a, void* b, void* c,
+                                            int d, void* e)                          {}
+JNIEXPORT void     JNICALL AWTFreeChar(void* character)                             {}
+JNIEXPORT void*    JNICALL AWTCharAdvance(void* font, int c)                        { return 0; }
+JNIEXPORT void     JNICALL AWTFontGenerateImage(void* a, void* b)                   {}
 
 
 

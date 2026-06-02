@@ -155,18 +155,7 @@ class MinecraftActivity : BaseActivity() {
         try {
             System.loadLibrary("pingjvm")
 
-            // 기존 jre lib 복사 블록은 그대로 두기
-            val jreLibDir = MinecraftJREPreparer.findJreLibDir(this, versionId)
-            if (jreLibDir != null && jreLibDir.exists()) {
-                listOf("libawt_xawt.so", "libawt_headless.so", "libpojavexec_awt.so").forEach { soName ->
-                    val src = File(nativesDir, soName)
-                    val dst = File(jreLibDir, soName)
-                    if (src.exists() && !dst.exists()) {
-                        src.copyTo(dst, overwrite = true)
-                        dst.setExecutable(true, false)
-                    }
-                }
-            }
+            JavaNativeLauncher.preloadAwtStubs(applicationInfo.nativeLibraryDir)
 
             // ── 렌더러별 .so 우선 로딩 ──────────────────────────
             val renderer = RendererManager.load(this)

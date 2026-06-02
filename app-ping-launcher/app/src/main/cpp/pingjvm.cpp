@@ -294,6 +294,21 @@ static void printJavaException(JNIEnv* env, jthrowable ex, int depth) {
 }
 
 extern "C" JNIEXPORT void JNICALL
+Java_kr_co_donghyun_pinglauncher_presentation_util_jni_JavaNativeLauncher_00024Companion_preloadAwtStubs(
+        JNIEnv* env, jobject clazz, jstring nativeLibDir) {
+    const char* dir = env->GetStringUTFChars(nativeLibDir, nullptr);
+    std::string path = std::string(dir) + "/libpojavexec.so";
+    env->ReleaseStringUTFChars(nativeLibDir, dir);
+
+    void* h = dlopen(path.c_str(), RTLD_NOW | RTLD_GLOBAL);
+    if (h) {
+        LOGI("✅ libpojavexec.so EARLY RTLD_GLOBAL: %s", path.c_str());
+    } else {
+        LOGE("❌ EARLY-LOAD 실패: %s", dlerror());
+    }
+}
+
+extern "C" JNIEXPORT void JNICALL
 Java_kr_co_donghyun_pinglauncher_presentation_util_jni_JavaNativeLauncher_nativeSetEnv(
         JNIEnv* env, jobject thiz, jstring key, jstring value) {
     const char* k = env->GetStringUTFChars(key, nullptr);
@@ -354,14 +369,23 @@ Java_kr_co_donghyun_pinglauncher_presentation_util_jni_JavaNativeLauncher_bootMi
     // =========================================================================
     // 🎯 1-1. OpenJDK 의존성 순서에 맞춰 필수 라이브러리들을 차례대로 전역 로드
     // =========================================================================
-    std::string pojavexec_path = java_lib_dir + "/../libpojavexec.so";
     std::string verify_path = java_lib_dir + "/libverify.so";
     std::string java_path   = java_lib_dir + "/libjava.so";
     std::string zip_path    = java_lib_dir + "/libzip.so"; // jar 파일 읽기에 필수
     std::string net_path    = java_lib_dir + "/libnet.so";
     std::string nio_path    = java_lib_dir + "/libnio.so";
 
-    dlopen(pojavexec_path.c_str(), RTLD_NOW | RTLD_GLOBAL);
+
+    if (const char* apk_native = getenv("POJAV_NATIVEDIR")) {
+        std::string pojavexec_apk = std::string(apk_native) + "/libpojavexec.so";
+        void* h = dlopen(pojavexec_apk.c_str(), RTLD_NOW | RTLD_GLOBAL);
+        if (h) {
+            LOGI("✅ libpojavexec.so RTLD_GLOBAL: %s", pojavexec_apk.c_str());
+        } else {
+            LOGE("❌ libpojavexec.so 글로벌 로드 실패: %s", dlerror());
+        }
+    }
+
     // 반드시 이 순서대로 열어야 서로를 참조하며 성공적으로 메모리에 올라갑니다.
     dlopen(verify_path.c_str(), RTLD_NOW | RTLD_GLOBAL);
     dlopen(java_path.c_str(), RTLD_NOW | RTLD_GLOBAL);
