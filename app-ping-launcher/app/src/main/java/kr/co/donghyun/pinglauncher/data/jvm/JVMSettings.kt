@@ -22,6 +22,7 @@ data class JvmSettings(
 
     fun toJvmArgArray(
         context: Context,
+        mcDir : File,
         userDir: String,
         classPath: String,
         libraryPath: String,
@@ -83,14 +84,19 @@ data class JvmSettings(
                 "$cacioDir/cacio-shared-1.10-SNAPSHOT.jar"
             ).joinToString(":")
 
+            val dm = context.resources.displayMetrics
+            val cacioW = dm.widthPixels
+            val cacioH = dm.heightPixels
+            args += "-Dcacio.managed.screensize=${cacioW}x${cacioH}"
+
             args += "-Xbootclasspath/p:$cacioJars"
             args += "-Djava.awt.headless=false"
-            args += "-Dcacio.managed.screensize=854x480"  // 또는 본인 윈도우 사이즈
             args += "-Dcacio.font.fontmanager=sun.awt.X11FontManager"
             args += "-Dcacio.font.fontscaler=sun.font.FreetypeFontScaler"
             args += "-Dswing.defaultlaf=javax.swing.plaf.metal.MetalLookAndFeel"
             args += "-Dawt.toolkit=net.java.openjdk.cacio.ctc.CTCToolkit"
             args += "-Djava.awt.graphicsenv=net.java.openjdk.cacio.ctc.CTCGraphicsEnvironment"
+            args += "-Duser.home=${mcDir.parentFile.absolutePath}"
         } else {
             // 모던: AWT 안 씀
             args += "-Djava.awt.headless=true"

@@ -152,46 +152,56 @@ class MinecraftActivity : BaseActivity() {
         javaMajor = MinecraftJREPreparer.pickJavaMajor(versionId)
         Log.d("PING_LAUNCHER", "선택된 Java major: $javaMajor (mc=$versionId)")
 
+        // pingjvm 은 반드시 떠야 하므로 별도 처리
         try {
             System.loadLibrary("pingjvm")
+        } catch (e: UnsatisfiedLinkError) {
+            Log.e("PING_LAUNCHER", "❌ libpingjvm.so 로드 실패 — 진행 불가: ${e.message}", e)
+            return
+        }
 
-            JavaNativeLauncher.preloadAwtStubs(applicationInfo.nativeLibraryDir)
-
-            // ── 렌더러별 .so 우선 로딩 ──────────────────────────
-            val renderer = RendererManager.load(this)
-            when (renderer.id) {
-                "mobileglues" -> {
-                    // info_getter 가 먼저! libmobileglues.so 의 의존성임
-                    val ig = File(nativesDir, "libmobileglues_info_getter.so")
-                    val mg = File(nativesDir, "libmobileglues.so")
-                    if (ig.exists()) System.load(ig.absolutePath)
-                    if (mg.exists()) {
-                        System.load(mg.absolutePath)
-                        Log.d("PING_LAUNCHER", "✅ 렌더러: MobileGlues")
-                    } else {
-                        Log.w("PING_LAUNCHER", "⚠️ libmobileglues.so 없음 — RendererManager 선택만 됐고 .so 미배포")
-                    }
+        // ── 렌더러별 .so 먼저 로드 (preloadAwtStubs 이전에) ───────────────
+        // preloadAwtStubs 같은 JNI 바인딩 함수에서 실패가 나더라도,
+        // 핵심 .so 들은 이미 메모리에 올라와 있어야 JVM 부팅이 가능하다.
+        val renderer = RendererManager.load(this)
+        when (renderer.id) {
+            "mobileglues" -> {
+                // info_getter 가 먼저! libmobileglues.so 의 의존성임
+                loadSoSafely(File(nativesDir, "libmobileglues_info_getter.so"), required = false)
+                if (loadSoSafely(File(nativesDir, "libmobileglues.so"), required = false)) {
+                    Log.d("PING_LAUNCHER", "✅ 렌더러: MobileGlues")
+                } else {
+                    Log.w("PING_LAUNCHER", "⚠️ libmobileglues.so 없음 — RendererManager 선택만 됐고 .so 미배포")
                 }
-                "zink" -> {
-                    try { System.loadLibrary("vulkan") } catch (_: Throwable) {}
-                    System.load(File(nativesDir, "libOSMesa.so").absolutePath)
+            }
+            "zink" -> {
+                try { System.loadLibrary("vulkan") } catch (_: Throwable) {}
+                if (loadSoSafely(File(nativesDir, "libOSMesa.so"), required = true)) {
                     Log.d("PING_LAUNCHER", "✅ 렌더러: Zink")
                 }
-                else -> {
-                    // gl4es / gl4es_desktop
-                    System.load(File(nativesDir, "libgl4es_114.so").absolutePath)
+            }
+            else -> {
+                // gl4es / gl4es_desktop / holy_gl4es
+                if (loadSoSafely(File(nativesDir, "libgl4es_114.so"), required = true)) {
                     Log.d("PING_LAUNCHER", "✅ 렌더러: GL4ES")
                 }
             }
+        }
 
-            // 공통 .so
-            System.load(File(nativesDir, "libopenal.so").absolutePath)
-            System.load(File(nativesDir, "libglfw.so").absolutePath)
-            System.load(File(nativesDir, "libpojavexec.so").absolutePath)
-            System.load(File(nativesDir, "liblwjgl.so").absolutePath)
-            System.load(File(nativesDir, "liblwjgl_opengl.so").absolutePath)
+        // 공통 .so — 하나가 실패해도 다음 것은 계속 시도
+        loadSoSafely(File(nativesDir, "libopenal.so"), required = false)
+        loadSoSafely(File(nativesDir, "libglfw.so"), required = true)
+        loadSoSafely(File(nativesDir, "libpojavexec.so"), required = true)
+        loadSoSafely(File(nativesDir, "liblwjgl.so"), required = false)
+        loadSoSafely(File(nativesDir, "liblwjgl_opengl.so"), required = false)
+
+        // ── AWT stub preload (실패해도 무시 — JNI 바인딩 불일치여도 핵심 .so 는 이미 떠 있음) ──
+        try {
+            JavaNativeLauncher.preloadAwtStubs(applicationInfo.nativeLibraryDir)
         } catch (e: UnsatisfiedLinkError) {
-            Log.w("PING_LAUNCHER", "일부 .so 이미 로드됨: ${e.message}")
+            Log.w("PING_LAUNCHER", "⚠️ preloadAwtStubs 바인딩 실패 (무시 가능): ${e.message}")
+        } catch (e: Throwable) {
+            Log.w("PING_LAUNCHER", "⚠️ preloadAwtStubs 예외 (무시 가능): ${e.message}")
         }
 
         try {
@@ -203,6 +213,34 @@ class MinecraftActivity : BaseActivity() {
 
         startCrashWatcher()
         startMinecraft()
+    }
+
+    /**
+     * .so 한 개를 안전하게 로드. 이미 로드되어 있거나 파일이 없으면 false 반환.
+     * required=true 인데 실패하면 ERROR 로그, 아니면 WARN 로그만 남기고 계속 진행.
+     */
+    private fun loadSoSafely(soFile: File, required: Boolean): Boolean {
+        if (!soFile.exists()) {
+            if (required) Log.e("PING_LAUNCHER", "❌ 필수 .so 파일 없음: ${soFile.name}")
+            else Log.w("PING_LAUNCHER", "⚠️ .so 파일 없음 (스킵): ${soFile.name}")
+            return false
+        }
+        return try {
+            System.load(soFile.absolutePath)
+            Log.d("PING_LAUNCHER", "📦 .so 로드: ${soFile.name}")
+            true
+        } catch (e: UnsatisfiedLinkError) {
+            // 이미 로드된 경우도 여기로 옴 — 무해
+            val msg = e.message ?: ""
+            if (msg.contains("already loaded", ignoreCase = true)) {
+                Log.d("PING_LAUNCHER", "ℹ️ 이미 로드됨: ${soFile.name}")
+                true
+            } else {
+                if (required) Log.e("PING_LAUNCHER", "❌ ${soFile.name} 로드 실패: $msg", e)
+                else Log.w("PING_LAUNCHER", "⚠️ ${soFile.name} 로드 실패 (무시): $msg")
+                false
+            }
+        }
     }
 
 
@@ -523,11 +561,24 @@ class MinecraftActivity : BaseActivity() {
             ?: customGameDir?.let { File(it) }
             ?: File(getExternalFilesDir(null), "instances/vanilla_$versionId")
 
-        val mcDir = instanceBase.also {
-            it.mkdirs()
-            File(it, "logs").mkdirs()
-            File(it, "mods").mkdirs()
+        val isLegacy = isLegacyVersion(versionId)
+
+        val mcDir = if (isLegacy) {
+            // 레거시 MC 는 user.home/.minecraft 를 강제로 사용.
+            // 인스턴스 베이스 안에 .minecraft 폴더를 만들고 거기로 user.home 을 가리키게 함.
+            val legacyRoot = File(instanceBase, ".minecraft")
+            legacyRoot.mkdirs()
+            File(legacyRoot, "logs").mkdirs()
+            File(legacyRoot, "mods").mkdirs()
+            legacyRoot
+        } else {
+            instanceBase.also {
+                it.mkdirs()
+                File(it, "logs").mkdirs()
+                File(it, "mods").mkdirs()
+            }
         }
+
 
         Log.d("PING_LAUNCHER", "instanceBase: ${instanceBase.absolutePath}")
 
@@ -706,7 +757,9 @@ class MinecraftActivity : BaseActivity() {
         val metaJvmArgs = instanceMeta?.gameJvmArgs?.toTypedArray() ?: emptyArray()
 
         val rendererPreference = RendererManager.load(this@MinecraftActivity)
-        val isLegacy = isLegacyVersion(versionId)
+        // MinecraftActivity.startMinecraft 안에서
+
+        Log.d("PING_LAUNCHER", "isLegacy=$isLegacy, mcDir=${mcDir.absolutePath}")
 
         // Legacy MC 는 fixed-function GL 필요 — MobileGlues 로 불가
         val renderer = if (isLegacy && rendererPreference.id == "mobileglues") {
@@ -727,6 +780,7 @@ class MinecraftActivity : BaseActivity() {
 
         val jvmArgs = jvm8CompatArgs + jvmSettings.toJvmArgArray(
             context = this,
+            mcDir = mcDir,
             userDir = mcDir.absolutePath,
             classPath = jarList.joinToString(":"),
             libraryPath = nativesDir.absolutePath,

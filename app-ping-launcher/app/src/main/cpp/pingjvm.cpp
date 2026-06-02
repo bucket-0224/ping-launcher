@@ -294,8 +294,8 @@ static void printJavaException(JNIEnv* env, jthrowable ex, int depth) {
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_kr_co_donghyun_pinglauncher_presentation_util_jni_JavaNativeLauncher_00024Companion_preloadAwtStubs(
-        JNIEnv* env, jobject clazz, jstring nativeLibDir) {
+Java_kr_co_donghyun_pinglauncher_presentation_util_jni_JavaNativeLauncher_preloadAwtStubs(
+        JNIEnv* env, jclass clazz, jstring nativeLibDir) {
     const char* dir = env->GetStringUTFChars(nativeLibDir, nullptr);
     std::string path = std::string(dir) + "/libpojavexec.so";
     env->ReleaseStringUTFChars(nativeLibDir, dir);
@@ -319,10 +319,12 @@ Java_kr_co_donghyun_pinglauncher_presentation_util_jni_JavaNativeLauncher_native
     env->ReleaseStringUTFChars(value, v);
 }
 
+
 extern "C" JNIEXPORT jint JNICALL
 Java_kr_co_donghyun_pinglauncher_presentation_util_jni_JavaNativeLauncher_bootMinecraftJVM(
         JNIEnv* env, jobject thiz, jstring lib_jvm_path, jobjectArray jvm_args, jobjectArray mc_args) {
 
+    // ── Renderer 환경변수 기본값 ─────────────────────────────────
     if (!getenv("POJAV_RENDERER"))  setenv("POJAV_RENDERER",  "vulkan_zink", 0);
     if (!getenv("LIBGL_STRING"))    setenv("LIBGL_STRING",    "VulkanGL",    0);
     if (!getenv("LIBGL_NAME"))      setenv("LIBGL_NAME",      "libltw.so",   0);
@@ -334,10 +336,7 @@ Java_kr_co_donghyun_pinglauncher_presentation_util_jni_JavaNativeLauncher_bootMi
     LOGI("🎨 Renderer env at boot: POJAV_RENDERER=%s, LIBGL_NAME=%s, LIBGL_ES=%s",
          getenv("POJAV_RENDERER"), getenv("LIBGL_NAME"), getenv("LIBGL_ES"));
 
-
-    // =========================================================================
-    // 🎯 [여기서부터 새로 추가] 자바 가상머신 표준 출력 가로채기 파이프라인 가동
-    // =========================================================================
+    // ── stdout/stderr → logcat 파이프 ────────────────────────────
     setvbuf(stdout, nullptr, _IOLBF, 0);
     setvbuf(stderr, nullptr, _IOLBF, 0);
     pipe(pfd);
@@ -345,11 +344,10 @@ Java_kr_co_donghyun_pinglauncher_presentation_util_jni_JavaNativeLauncher_bootMi
     dup2(pfd[1], STDERR_FILENO);
     pthread_create(&logging_thread, nullptr, stdout_logger_thread_func, nullptr);
     pthread_detach(logging_thread);
-    // =========================================================================
 
-
+    // ── libjvm.so 로드 ──────────────────────────────────────────
     const char* path = env->GetStringUTFChars(lib_jvm_path, nullptr);
-    void* handle = dlopen(path, RTLD_NOW | RTLD_GLOBAL); // 대장 먼저 켜기!
+    void* handle = dlopen(path, RTLD_NOW | RTLD_GLOBAL);
 
     if (!handle) {
         LOGE("libjvm.so 최종 로드 실패: %s", dlerror());
@@ -357,7 +355,9 @@ Java_kr_co_donghyun_pinglauncher_presentation_util_jni_JavaNativeLauncher_bootMi
         return -1;
     }
 
-    // 경로 파싱
+    // 경로 파싱: .../jre8_runtime/lib/aarch64/server/libjvm.so
+    //  → server_lib_dir = .../jre8_runtime/lib/aarch64/server
+    //  → java_lib_dir   = .../jre8_runtime/lib/aarch64
     std::string jvm_path_str(path);
     size_t last_slash = jvm_path_str.find_last_of("/");
     std::string server_lib_dir = jvm_path_str.substr(0, last_slash);
@@ -366,89 +366,117 @@ Java_kr_co_donghyun_pinglauncher_presentation_util_jni_JavaNativeLauncher_bootMi
 
     env->ReleaseStringUTFChars(lib_jvm_path, path);
 
-    // =========================================================================
-    // 🎯 1-1. OpenJDK 의존성 순서에 맞춰 필수 라이브러리들을 차례대로 전역 로드
-    // =========================================================================
-    std::string verify_path = java_lib_dir + "/libverify.so";
-    std::string java_path   = java_lib_dir + "/libjava.so";
-    std::string zip_path    = java_lib_dir + "/libzip.so"; // jar 파일 읽기에 필수
-    std::string net_path    = java_lib_dir + "/libnet.so";
-    std::string nio_path    = java_lib_dir + "/libnio.so";
-
-
-    if (const char* apk_native = getenv("POJAV_NATIVEDIR")) {
-        std::string pojavexec_apk = std::string(apk_native) + "/libpojavexec.so";
-        void* h = dlopen(pojavexec_apk.c_str(), RTLD_NOW | RTLD_GLOBAL);
+    // ── 공통 헬퍼 ────────────────────────────────────────────────
+    auto preload = [](const std::string& p, const char* label) -> bool {
+        void* h = dlopen(p.c_str(), RTLD_NOW | RTLD_GLOBAL);
         if (h) {
-            LOGI("✅ libpojavexec.so RTLD_GLOBAL: %s", pojavexec_apk.c_str());
+            LOGI("  ✅ preload: %s (%s)", label, p.c_str());
+            return true;
         } else {
-            LOGE("❌ libpojavexec.so 글로벌 로드 실패: %s", dlerror());
-        }
-    }
-
-    // 반드시 이 순서대로 열어야 서로를 참조하며 성공적으로 메모리에 올라갑니다.
-    dlopen(verify_path.c_str(), RTLD_NOW | RTLD_GLOBAL);
-    dlopen(java_path.c_str(), RTLD_NOW | RTLD_GLOBAL);
-    dlopen(zip_path.c_str(), RTLD_NOW | RTLD_GLOBAL);
-    dlopen(net_path.c_str(), RTLD_NOW | RTLD_GLOBAL);
-    dlopen(nio_path.c_str(), RTLD_NOW | RTLD_GLOBAL);
-
-    dlopen(java_path.c_str(), RTLD_NOW | RTLD_GLOBAL);
-    dlopen(zip_path.c_str(), RTLD_NOW | RTLD_GLOBAL);
-    dlopen(net_path.c_str(), RTLD_NOW | RTLD_GLOBAL);
-    dlopen(nio_path.c_str(), RTLD_NOW | RTLD_GLOBAL);
-
-    // ====== Legacy AWT 라이브러리 선행 로드 (1.5.2 ~ 1.12.2 호환) ======
-    std::string jre_lib_dir = java_path.substr(0, java_path.find_last_of('/'));
-
-    auto preload = [](const std::string& path, const char* label) {
-        if (dlopen(path.c_str(), RTLD_NOW | RTLD_GLOBAL)) {
-            LOGI("  ✅ AWT 선행 로드: %s", path.c_str());
-        } else {
-            LOGE("  ❌ AWT 선행 로드 실패 (%s): %s", label, dlerror());
+            LOGE("  ❌ preload FAILED (%s): %s", label, dlerror());
+            return false;
         }
     };
 
-    // (1) libawt.so
-    preload(jre_lib_dir + "/libawt.so", "libawt.so");
+    auto is_already_loaded = [](const std::string& p) -> bool {
+        void* h = dlopen(p.c_str(), RTLD_NOLOAD | RTLD_NOW);
+        if (h) {
+            dlclose(h); // refcount 원복
+            return true;
+        }
+        return false;
+    };
 
-    // (2) libawt_xawt.so
-    preload(jre_lib_dir + "/libawt_xawt.so", "libawt_xawt.so (JRE)");
-    if (const char* apk_lib_dir = getenv("POJAV_NATIVEDIR")) {
-        preload(std::string(apk_lib_dir) + "/libawt_xawt.so", "libawt_xawt.so (APK)");
+    // ── ★★★ 가장 먼저: APK 의 패치된 libawt_xawt.so ★★★ ──────────
+    // 이유: JRE 의 libfontmanager.so 가 SONAME 으로 libawt_xawt.so 를 찾고
+    // 그 안에서 AWTCountFonts/AWTFreeChar 등 17 개 X11FontScaler 심볼을 resolve 한다.
+    // JRE 본가의 libawt_xawt.so 에는 이 심볼이 없으므로 (X11 없는 Android 라서),
+    // 우리가 xawt_fake.c 의 노옵 스텁으로 만든 APK 버전을 SONAME 으로 먼저 점유시켜야
+    // 이후 libfontmanager.so dlopen 이 성공한다.
+    //
+    // 순서가 뒤집히면 (JRE 가 먼저) → SONAME 이 JRE 버전으로 고정되어
+    // 이후 APK 버전 dlopen 은 no-op 가 되고, libfontmanager.so 는 미해결 심볼로 실패.
+    const char* apk_native_dir = getenv("POJAV_NATIVEDIR");
+
+    if (apk_native_dir) {
+        std::string pojavexec_awt_apk = std::string(apk_native_dir) + "/libpojavexec_awt.so";
+        preload(pojavexec_awt_apk, "libpojavexec_awt.so (Cacio AWT bridge)");
     }
 
-    // (3) libawt_headless.so
+    if (apk_native_dir) {
+        std::string apk_xawt = std::string(apk_native_dir) + "/libawt_xawt.so";
+        if (!preload(apk_xawt, "libawt_xawt.so (APK patched, MUST be first)")) {
+            LOGE("⚠️ APK libawt_xawt.so 로드 실패 — libfontmanager.so 도 곧 실패할 것");
+        }
+    } else {
+        LOGE("⚠️ POJAV_NATIVEDIR 미설정 — APK libawt_xawt.so 로드 불가");
+    }
+
+    // ── pojavexec.so (Pojav 내부 JNI 브릿지) ────────────────────
+    if (apk_native_dir) {
+        std::string pojavexec_apk = std::string(apk_native_dir) + "/libpojavexec.so";
+        preload(pojavexec_apk, "libpojavexec.so (APK)");
+    }
+
+    // ── OpenJDK 의존성 체인 (verify → java → zip → net → nio) ──
+    std::string verify_path = java_lib_dir + "/libverify.so";
+    std::string java_path   = java_lib_dir + "/libjava.so";
+    std::string zip_path    = java_lib_dir + "/libzip.so";
+    std::string net_path    = java_lib_dir + "/libnet.so";
+    std::string nio_path    = java_lib_dir + "/libnio.so";
+
+    preload(verify_path, "libverify.so");
+    preload(java_path,   "libjava.so");
+    preload(zip_path,    "libzip.so");
+    preload(net_path,    "libnet.so");
+    preload(nio_path,    "libnio.so");
+
+    // ── Legacy AWT 체인 (1.5.2 ~ 1.12.2 호환) ───────────────────
+    // libawt → libawt_xawt(JRE, 이미 SONAME 점유됨) → libawt_headless → libfontmanager
+    std::string jre_lib_dir = java_path.substr(0, java_path.find_last_of('/'));
+
+    preload(jre_lib_dir + "/libawt.so", "libawt.so");
+
+    // JRE 의 libawt_xawt.so 는 명시적으로 호출만 — 이미 APK 버전이 SONAME 을 점유했기에
+    // 이건 사실상 no-op 가 되어야 정상. 만약 여기서 "성공" 메시지가 뜨고 dlsym 으로
+    // X11FontScaler 심볼을 못 찾는다면 SONAME 점유가 실패했다는 신호.
+    if (is_already_loaded("libawt_xawt.so")) {
+        LOGI("  ℹ️ libawt_xawt.so SONAME 이미 점유됨 (예상대로 APK 버전이 win)");
+    } else {
+        LOGE("  ⚠️ libawt_xawt.so SONAME 이 비어있음 — APK preload 실패 가능성");
+        preload(jre_lib_dir + "/libawt_xawt.so", "libawt_xawt.so (JRE fallback)");
+    }
+
     preload(jre_lib_dir + "/libawt_headless.so", "libawt_headless.so");
 
-    // (4) libfontmanager.so — 추가
-    preload(jre_lib_dir + "/libfontmanager.so", "libfontmanager.so");
+    // ── libfontmanager.so — 진실의 순간 ─────────────────────────
+    // 여기서 실패하면 dlerror 에 어떤 심볼이 빠졌는지 정확히 찍힌다.
+    // "cannot locate symbol 'AWTXxx'" 식으로 나오면 xawt_fake.c 에 해당 스텁 추가.
+    if (!preload(jre_lib_dir + "/libfontmanager.so", "libfontmanager.so")) {
+        LOGE("⚠️ libfontmanager.so 로드 실패 — 폰트 렌더링은 동작 안 할 수 있음");
+        LOGE("    → xawt_fake.c 에 누락된 X11FontScaler 스텁 추가 필요");
+    }
 
-    LOGI("자바 핵심 의존성 라이브러리 선행 로드 완료!");
-    // =========================================================================
+    LOGI("✅ 자바 핵심 의존성 라이브러리 선행 로드 완료");
 
-    // 2. OpenJDK의 JNI_CreateJavaVM 함수 포인터 획득
+    // ── JNI_CreateJavaVM 심볼 획득 ──────────────────────────────
     CreateJavaVM_t createJavaVM = (CreateJavaVM_t)dlsym(handle, "JNI_CreateJavaVM");
     if (!createJavaVM) {
-        LOGE("JNI_CreateJavaVM 심볼을 찾을 수 없습니다.");
+        LOGE("JNI_CreateJavaVM 심볼을 찾을 수 없습니다: %s", dlerror());
         dlclose(handle);
         return -2;
     }
 
-    // 3. JVM Arguments 조립
+    // ── JVM Arguments 조립 ─────────────────────────────────────
     jsize jvm_arg_count = env->GetArrayLength(jvm_args);
     std::vector<JavaVMOption> options(jvm_arg_count);
 
     for (int i = 0; i < jvm_arg_count; ++i) {
         jstring arg = (jstring)env->GetObjectArrayElement(jvm_args, i);
         const char* raw_arg = env->GetStringUTFChars(arg, nullptr);
-
-        // strdup을 사용해 문자열 복제
         options[i].optionString = strdup(raw_arg);
         options[i].extraInfo = nullptr;
-
         LOGI("전달된 JVM 인자 [%d]: %s", i, options[i].optionString);
-
         env->ReleaseStringUTFChars(arg, raw_arg);
     }
 
@@ -458,7 +486,7 @@ Java_kr_co_donghyun_pinglauncher_presentation_util_jni_JavaNativeLauncher_bootMi
     vm_args.options = options.data();
     vm_args.ignoreUnrecognized = JNI_TRUE;
 
-
+    // user.dir 처리
     for (int i = 0; i < jvm_arg_count; i++) {
         const char* opt = options[i].optionString;
         if (strncmp(opt, "-Duser.dir=", 11) == 0) {
@@ -469,9 +497,9 @@ Java_kr_co_donghyun_pinglauncher_presentation_util_jni_JavaNativeLauncher_bootMi
         }
     }
 
-    // 4. 새로운 내장 자바 가상머신 부팅!
+    // ── JVM 부팅 ────────────────────────────────────────────────
     JavaVM* customVM = nullptr;
-    JNIEnv* customEnv = nullptr; // 🎯 이 녀석이 진짜 마인크래프트를 돌릴 엔진입니다!
+    JNIEnv* customEnv = nullptr;
 
     LOGI("JNI_CreateJavaVM 호출 중...");
     jint res = createJavaVM(&customVM, (void**)&customEnv, &vm_args);
@@ -480,24 +508,22 @@ Java_kr_co_donghyun_pinglauncher_presentation_util_jni_JavaNativeLauncher_bootMi
         LOGE("JVM 생성 실패: 코드 %d", res);
         return -3;
     }
-    LOGI("내장 JVM 부팅 성공!");
+    LOGI("✅ 내장 JVM 부팅 성공!");
     installGrabbingHook();
-//    registerGLFWGamepadNative(customEnv);  // ← 이 줄 추가
 
-    // ==========================================================
-    // 🔥 [핵심 수정 구간] 이제부터는 무조건 customEnv만 사용해야 합니다!
-    // ==========================================================
-
-    // 5. 마인크래프트 메인 클래스 로드
-// 시스템 프로퍼티에서 mainClass 읽기
+    // ── 마인크래프트 메인 클래스 로드 ───────────────────────────
+    // 시스템 프로퍼티에서 mainClass 읽기
     jclass systemClass = customEnv->FindClass("java/lang/System");
-    jmethodID getPropMethod = customEnv->GetStaticMethodID(systemClass, "getProperty", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;");
+    jmethodID getPropMethod = customEnv->GetStaticMethodID(
+            systemClass, "getProperty",
+            "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;");
     jstring propKey = customEnv->NewStringUTF("ping.main.class");
     jstring propDefault = customEnv->NewStringUTF("net.minecraft.client.main.Main");
-    jstring propValue = (jstring)customEnv->CallStaticObjectMethod(systemClass, getPropMethod, propKey, propDefault);
+    jstring propValue = (jstring)customEnv->CallStaticObjectMethod(
+            systemClass, getPropMethod, propKey, propDefault);
     const char* mainClassNameRaw = customEnv->GetStringUTFChars(propValue, nullptr);
 
-// dot → slash 변환
+    // dot → slash 변환
     std::string mainClassNameStr(mainClassNameRaw);
     std::replace(mainClassNameStr.begin(), mainClassNameStr.end(), '.', '/');
     customEnv->ReleaseStringUTFChars(propValue, mainClassNameRaw);
@@ -517,14 +543,14 @@ Java_kr_co_donghyun_pinglauncher_presentation_util_jni_JavaNativeLauncher_bootMi
         return -4;
     }
 
-    jmethodID mainMethod = customEnv->GetStaticMethodID(mainClass, "main", "([Ljava/lang/String;)V");
+    jmethodID mainMethod = customEnv->GetStaticMethodID(
+            mainClass, "main", "([Ljava/lang/String;)V");
     if (!mainMethod) {
         LOGE("main 메서드를 찾을 수 없습니다.");
         return -5;
     }
 
-    // 6. 마인크래프트 실행 인자(mcArgs) 전달용 자바 배열 생성
-    // (길이는 안드로이드 env에서 가져오고, 생성은 customEnv에서 합니다)
+    // ── 마인크래프트 실행 인자 배열 생성 ────────────────────────
     jsize mc_arg_count = env->GetArrayLength(mc_args);
     jclass stringClass = customEnv->FindClass("java/lang/String");
     jobjectArray mc_args_for_jvm = customEnv->NewObjectArray(mc_arg_count, stringClass, nullptr);
@@ -532,21 +558,15 @@ Java_kr_co_donghyun_pinglauncher_presentation_util_jni_JavaNativeLauncher_bootMi
     for (int i = 0; i < mc_arg_count; ++i) {
         jstring arg = (jstring)env->GetObjectArrayElement(mc_args, i);
         const char* raw_arg = env->GetStringUTFChars(arg, nullptr);
-
-        // customEnv에 넣을 새 문자열 생성
         jstring jvm_str = customEnv->NewStringUTF(raw_arg);
         customEnv->SetObjectArrayElement(mc_args_for_jvm, i, jvm_str);
-
         env->ReleaseStringUTFChars(arg, raw_arg);
     }
 
-    // 🚀 드디어 마인크래프트 최초 구동
+    // ── 🚀 Minecraft 실행 ──────────────────────────────────────
     LOGI("%s.main() 실행!", mainClassNameStr.c_str());
     customEnv->CallStaticVoidMethod(mainClass, mainMethod, mc_args_for_jvm);
 
-    // =========================================================================
-    // 🔥 [핵심 추가] 마인크래프트 메인 메서드 실행 중 발생한 자바 예외 감지 및 출력
-    // =========================================================================
     if (customEnv->ExceptionCheck()) {
         LOGE("🚨 마인크래프트 실행 중 치명적인 자바 예외가 발생했습니다!");
         jthrowable ex = customEnv->ExceptionOccurred();

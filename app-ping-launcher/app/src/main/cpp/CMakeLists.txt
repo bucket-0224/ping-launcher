@@ -31,7 +31,6 @@ set(POJAV_SOURCES
         pojav_jni/ctxbridges/swap_interval_no_egl.c
         pojav_jni/driver_helper/nsbypass.c
         pojav_jni/driver_helper/hook.c
-        pojav_jni/awt_xawt/xawt_fake.c
         pojav_jni/jvm_hooks/lwjgl_dlopen_hook.c
         pojav_jni/jvm_hooks/java_exec_hooks.c
         pojav_jni/jvm_hooks/emui_iterator_fix_hook.c
@@ -83,6 +82,23 @@ target_link_libraries(pojavexec
         ${android-lib}
         ${dl-lib}
         bytehook::bytehook
+)
+
+# ── libawt_xawt.so ────────────────────────────────────────────
+# JRE 의 libfontmanager.so 가 SONAME 으로 libawt_xawt.so 를 찾고
+# 그 안에서 X11FontScaler 심볼 (AWTFreeChar 등 17개) 을 resolve 하려고 한다.
+# JRE 자체의 libawt_xawt.so 에는 이 심볼이 없으므로,
+# xawt_fake.c 의 노옵 스텁을 담은 우리 버전을 APK 에 같이 패키징해서
+# JRE 버전보다 먼저 로드하면 SONAME 중복으로 우리 것이 우선된다.
+add_library(awt_xawt SHARED
+        pojav_jni/awt_xawt/xawt_fake.c
+)
+target_include_directories(awt_xawt PRIVATE ${POJAV_INCLUDES})
+target_compile_options(awt_xawt PRIVATE ${POJAV_WARN_FLAGS})
+target_link_libraries(awt_xawt
+        ${log-lib}
+        ${android-lib}
+        ${dl-lib}
 )
 
 # ── libpojavexec_awt.so (AWT/Cacio 브릿지 분리) ───────────────

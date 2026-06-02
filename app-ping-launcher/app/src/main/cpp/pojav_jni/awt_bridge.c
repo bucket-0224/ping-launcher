@@ -32,19 +32,54 @@ jmethodID method_SystemClipboardDataReceived = NULL;
 jfieldID field_x;
 jfieldID field_y;
 
+// app/src/main/cpp/pojav_jni/awt_bridge.c
+
 jint JNI_OnLoad(JavaVM* vm, void* reserved) {
-    if (dalvikJavaVMPtr == NULL) {
-        //Save dalvik global JavaVM pointer
+    JNIEnv *env = NULL;
+    (*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_4);
+
+    // 이 .so 는 두 가지 시나리오에서 JNI_OnLoad 가 호출될 수 있다:
+    //  1) Android 앱 시작 시 System.loadLibrary("pojavexec_awt") — Dalvik VM
+    //  2) JVM 부팅 후 Cacio 의 System.load("libpojavexec_awt.so") — OpenJDK VM
+    //
+    // 두 VM 을 구별하려면 "Dalvik 전용 클래스" 가 보이는지 확인하면 된다.
+    // android.os.Build 가 가장 안전 — Dalvik 에는 있고 OpenJDK 에는 없음.
+    jclass dalvikMarker = (*env)->FindClass(env, "android/os/Build");
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        dalvikMarker = NULL;
+    }
+
+    if (dalvikMarker != NULL && dalvikJavaVMPtr == NULL) {
+        // ─── Dalvik 측 초기화 ────────────────────────────────────
         dalvikJavaVMPtr = vm;
-        JNIEnv *env = NULL;
-        (*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_4);
-        class_MainActivity = (*env)->NewGlobalRef(env,(*env)->FindClass(env, "net/kdt/pojavlaunch/MainActivity"));
-        method_OpenLink= (*env)->GetStaticMethodID(env, class_MainActivity, "openLink", "(Ljava/lang/String;)V");
-        method_OpenPath= (*env)->GetStaticMethodID(env, class_MainActivity, "openLink", "(Ljava/lang/String;)V");
-        method_QuerySystemClipboard = (*env)->GetStaticMethodID(env, class_MainActivity, "querySystemClipboard", "()V");
-        method_PutClipboardData = (*env)->GetStaticMethodID(env, class_MainActivity, "putClipboardData", "(Ljava/lang/String;Ljava/lang/String;)V");
-    } else if (dalvikJavaVMPtr != vm) {
+        (*env)->DeleteLocalRef(env, dalvikMarker);
+
+        jclass mainAct = (*env)->FindClass(env, "net/kdt/pojavlaunch/MainActivity");
+        if ((*env)->ExceptionCheck(env)) {
+            (*env)->ExceptionClear(env);
+        }
+        if (mainAct != NULL) {
+            class_MainActivity = (*env)->NewGlobalRef(env, mainAct);
+            method_OpenLink             = (*env)->GetStaticMethodID(env, class_MainActivity, "openLink", "(Ljava/lang/String;)V");
+            method_OpenPath             = (*env)->GetStaticMethodID(env, class_MainActivity, "openLink", "(Ljava/lang/String;)V");
+            method_QuerySystemClipboard = (*env)->GetStaticMethodID(env, class_MainActivity, "querySystemClipboard", "()V");
+            method_PutClipboardData     = (*env)->GetStaticMethodID(env, class_MainActivity, "putClipboardData", "(Ljava/lang/String;Ljava/lang/String;)V");
+            // 어느 하나라도 못 찾았으면 예외를 클리어 (그래야 JVM 이 NoSuchMethodError 던지지 않음)
+            if ((*env)->ExceptionCheck(env)) {
+                (*env)->ExceptionDescribe(env);
+                (*env)->ExceptionClear(env);
+            }
+            (*env)->DeleteLocalRef(env, mainAct);
+        }
+    } else {
+        // ─── JVM (OpenJDK) 측 초기화 ────────────────────────────
         runtimeJavaVMPtr = vm;
+        // 여기서는 Dalvik 클래스를 찾으면 안 됨 — 어차피 없음.
+        // 혹시 모를 잔여 예외 클리어.
+        if ((*env)->ExceptionCheck(env)) {
+            (*env)->ExceptionClear(env);
+        }
     }
 
     return JNI_VERSION_1_4;
