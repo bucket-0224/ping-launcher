@@ -45,7 +45,8 @@ enum class ContentType(val classId: Int, val label: String) {
     MODPACK(4471, "🗂️ 모드팩"),
     MOD(6, "📂 모드"),
     TEXTURE_PACK(12, "🎨 텍스처팩"),
-    SHADER_PACK(6552, "📋 쉐이더팩");
+    SHADER_PACK(6552, "📋 쉐이더팩"),
+    WORLD(17, "🗺️ 월드");
 
     /** 설치 시 사용자가 타겟 인스턴스를 골라야 하는 타입. 모드팩만 자체 인스턴스를 만듦. */
     val needsTargetInstance: Boolean

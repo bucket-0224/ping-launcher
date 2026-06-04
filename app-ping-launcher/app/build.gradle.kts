@@ -154,4 +154,45 @@ dependencies {
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
+
+    // ── ProcessorLauncher.java → assets/forge-runtime/processor-launcher.jar 빌드 ──
+// embedded OpenJDK 위에서 돌 코드라 안드로이드 dex 와는 별도로 JVM 8 호환 jar 로 패키징.
+    val processorLauncherSrc =
+        file("src/main/java/kr/co/donghyun/pinglauncher/forge/ProcessorLauncher.java")
+    val processorLauncherClassesDir =
+        layout.buildDirectory.dir("processor-launcher/classes")
+    val processorLauncherJarOut =
+        file("src/main/assets/forge-runtime/processor-launcher.jar")
+
+    val compileProcessorLauncher by tasks.registering(JavaCompile::class) {
+        description = "Compile ProcessorLauncher.java for the embedded JVM (JDK 8 target)"
+        source = fileTree(processorLauncherSrc.parentFile) {
+            include("ProcessorLauncher.java")
+        }
+        classpath = files()
+        destinationDirectory.set(processorLauncherClassesDir)
+        sourceCompatibility = "1.8"
+        targetCompatibility = "1.8"
+        options.release.set(8)
+        inputs.file(processorLauncherSrc)
+    }
+
+    val buildProcessorLauncherJar by tasks.registering(Jar::class) {
+        description = "Package ProcessorLauncher classes into assets/forge-runtime/processor-launcher.jar"
+        dependsOn(compileProcessorLauncher)
+        from(processorLauncherClassesDir)
+        archiveFileName.set("processor-launcher.jar")
+        destinationDirectory.set(processorLauncherJarOut.parentFile)
+        // assets 디렉토리 mkdirs 보장
+        doFirst { processorLauncherJarOut.parentFile.mkdirs() }
+    }
+
+    // merge*Assets 시점 전에 jar 가 준비되어 있도록 강제
+    tasks.matching {
+        it.name.startsWith("merge") && it.name.endsWith("Assets") ||
+                it.name.startsWith("package") && it.name.endsWith("Assets") ||
+                it.name == "preBuild"
+    }.configureEach {
+        dependsOn(buildProcessorLauncherJar)
+    }
 }

@@ -46,6 +46,8 @@ import kr.co.donghyun.pinglauncher.presentation.util.minecraft.VersionRepository
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
+import java.io.FileOutputStream
+import java.util.zip.ZipFile
 
 /**
  * 컨텐츠(모드팩/모드/텍스처팩/쉐이더팩) 브라우저 액티비티.
@@ -74,6 +76,10 @@ class ContentPackBrowserActivity : BaseActivity() {
 
     // CurseForge Podium project ID (modrinth: "podium", CF slug: "podium-sodium")
     private val PODIUM_MOD_ID = 1241894   // ← CurseForge "Podium (Pojav x Sodium)"
+
+    // Fabric 모드는 거의 다 Fabric API 에 묶임. CurseForge 의존성에 등록 안 된 경우가
+    // 많아서 일괄로 보장한다. NeoForge / Forge 는 API 가 로더에 내장이라 별도 처리 불필요.
+    private val FABRIC_API_MOD_ID = 306612
 
     // ───── 내부 상태 ─────
     private var currentQuery: String = ""
@@ -281,6 +287,126 @@ class ContentPackBrowserActivity : BaseActivity() {
         detailLauncher.launch(intent)
     }
 
+    /**
+     * CurseForge 의 월드(맵) zip 을 받아 인스턴스의 saves/ 에 추출.
+     * zip 레이아웃 두 가지를 모두 허용:
+     *  A) WorldName/level.dat       ← 가장 흔함
+     *  B) level.dat                  ← zip root 가 곧 월드
+     * 같은 이름의 월드가 이미 있으면 " (1)", " (2)" 붙여서 충돌 회피.
+     */
+    private suspend fun installWorld(
+        file: CurseForgeFile,
+        instanceDir: File,
+        mcVersion: String,
+    ): Boolean = withContext(Dispatchers.IO) {
+        val savesDir = if (isLegacyVersion(mcVersion))
+            instanceDir.resolve(".minecraft/saves")
+        else
+            instanceDir.resolve("saves")
+        savesDir.mkdirs()
+
+        val tmpZip = File.createTempFile("world-", ".zip", cacheDir)
+        try {
+            // 1) 다운로드
+            val url = resolveDownloadUrl(file)
+            downloadFile(url, tmpZip, file.fileName)
+
+            // 2) zip 안에서 level.dat 위치 추적
+            val worldRoot = findWorldRootInZip(tmpZip) ?: run {
+                Log.e("PING_LAUNCHER", "🗺️ zip 안에 level.dat 없음 — 맵 아님? ${file.fileName}")
+                return@withContext false
+            }
+            Log.d("PING_LAUNCHER", "🗺️ worldRoot in zip = '${worldRoot.ifEmpty { "(root)" }}'")
+
+            // 3) 폴더명 결정
+            val baseName = when {
+                worldRoot.isEmpty() -> file.fileName
+                    .substringBeforeLast(".zip")
+                    .substringBeforeLast(".")
+                    .replace(Regex("[^A-Za-z0-9가-힣 _.\\-]"), "_")
+                    .trim()
+                    .ifEmpty { "ImportedWorld" }
+                else -> worldRoot.trimEnd('/').substringAfterLast('/')
+            }
+
+            // 4) 충돌 회피
+            var target = savesDir.resolve(baseName)
+            var n = 1
+            while (target.exists()) {
+                target = savesDir.resolve("$baseName ($n)")
+                n++
+            }
+            target.mkdirs()
+
+            // 5) 추출
+            var extractedFiles = 0
+            ZipFile(tmpZip).use { zip ->
+                val entries = zip.entries()
+                while (entries.hasMoreElements()) {
+                    val entry = entries.nextElement()
+                    if (entry.isDirectory) continue
+                    val name = entry.name
+
+                    // 잡파일 스킵
+                    if (name.startsWith("__MACOSX/")) continue
+                    if (name.endsWith("/.DS_Store") || name == ".DS_Store") continue
+                    if (name.contains("..")) continue   // path traversal 방어
+
+                    val rel = if (worldRoot.isEmpty()) name
+                    else {
+                        if (!name.startsWith(worldRoot)) continue
+                        name.removePrefix(worldRoot)
+                    }
+                    if (rel.isEmpty() || rel.endsWith("/")) continue
+
+                    val outFile = target.resolve(rel)
+                    outFile.parentFile?.mkdirs()
+                    zip.getInputStream(entry).use { input ->
+                        FileOutputStream(outFile).use { input.copyTo(it) }
+                    }
+                    extractedFiles++
+                }
+            }
+
+            if (extractedFiles == 0) {
+                Log.e("PING_LAUNCHER", "🗺️ 추출된 파일이 0개 — 손상된 zip?")
+                target.deleteRecursively()
+                return@withContext false
+            }
+
+            Log.d("PING_LAUNCHER", "🗺️ 맵 설치 완료: ${target.name} ($extractedFiles 파일)")
+            true
+        } catch (e: Exception) {
+            Log.e("PING_LAUNCHER", "🗺️ 맵 설치 실패: ${e.message}", e)
+            false
+        } finally {
+            tmpZip.delete()
+        }
+    }
+
+    /**
+     * zip 안에서 level.dat 가 위치한 prefix 를 찾는다.
+     *  - ""       : zip root 가 곧 월드
+     *  - "Name/"  : 한 단계 안
+     *  - null     : 못 찾음 (월드 zip 아님)
+     * 여러 개면 가장 얕은 것을 채택 (백업 폴더 등 회피).
+     */
+    private fun findWorldRootInZip(zipFile: File): String? {
+        ZipFile(zipFile).use { zip ->
+            val entries = zip.entries().toList()
+            val levelDat = entries
+                .filter {
+                    !it.isDirectory &&
+                            (it.name == "level.dat" || it.name.endsWith("/level.dat"))
+                }
+                .minByOrNull { it.name.count { c -> c == '/' } }
+                ?: return null
+
+            return if (levelDat.name == "level.dat") ""
+            else levelDat.name.substringBeforeLast("/level.dat") + "/"
+        }
+    }
+
     /** 추가 정보 없이 바로 설치 (모드팩/텍스처팩/쉐이더팩 케이스) */
     private fun installDirect(mod: CurseForgeMod, contentType: ContentType) {
         lifecycleScope.launch {
@@ -304,6 +430,65 @@ class ContentPackBrowserActivity : BaseActivity() {
             }
         }
     }
+
+    /**
+     * Fabric 인스턴스에 모드를 추가할 때 mods/ 에 Fabric API 가 없다면 자동 설치.
+     * CurseForge 의 메타가 Fabric API 를 required 로 표기 안 한 경우를 커버한다.
+     *
+     * NeoForge / Forge / Vanilla 인스턴스에는 호출 안 함:
+     *  - NeoForge / Forge 는 API 가 로더에 내장
+     *  - Vanilla 는 Fabric 자체가 없으니 무의미
+     */
+    private suspend fun ensureFabricApiInstalled(
+        instanceDir: File,
+        mcVersion: String,
+    ) {
+        val modsDir = if (isLegacyVersion(mcVersion))
+            instanceDir.resolve(".minecraft/mods")
+        else
+            instanceDir.resolve("mods")
+        modsDir.mkdirs()
+
+        val jars = modsDir.listFiles()
+            ?.filter { it.isFile && it.extension == "jar" }
+            ?: emptyList()
+
+        // 이미 Fabric API 가 깔려있는지 — 파일명 prefix 로 검출
+        //  - fabric-api-0.92.0+1.20.1.jar  → prefix "fabric-api"
+        //  - fabric-api-base-0.4.x.jar      → 별개 모듈, 본체 아님
+        val hasFabricApi = jars.any { f ->
+            val prefix = extractModFilePrefix(f.name).lowercase()
+            // 정확히 "fabric-api" 만 본체로 인정. fabric-api-base, fabric-api-lookup 등은 모듈
+            prefix == "fabric-api"
+        }
+        if (hasFabricApi) {
+            Log.d("PING_LAUNCHER", "🩹 Fabric API 이미 설치됨 — 스킵")
+            return
+        }
+
+        Log.d("PING_LAUNCHER", "🩹 Fabric API 없음 → 자동 설치 (mc=$mcVersion)")
+
+        val file = withContext(Dispatchers.IO) {
+            fetchLatestFileForVersion(FABRIC_API_MOD_ID, mcVersion, "fabric")
+        } ?: run {
+            Log.w("PING_LAUNCHER", "🩹 Fabric API: mc=$mcVersion 호환 빌드 없음 — 스킵")
+            return
+        }
+
+        val outFile = modsDir.resolve(file.fileName)
+        if (outFile.exists() && outFile.length() == file.fileLength && file.fileLength > 0) {
+            Log.d("PING_LAUNCHER", "🩹 Fabric API 동일 파일 존재 — 스킵")
+            return
+        }
+        try {
+            val url = resolveDownloadUrl(file)
+            withContext(Dispatchers.IO) { downloadFile(url, outFile, file.fileName) }
+            Log.d("PING_LAUNCHER", "🩹 Fabric API 자동 설치 완료: ${file.fileName}")
+        } catch (e: Exception) {
+            Log.e("PING_LAUNCHER", "🩹 Fabric API 다운로드 실패: ${e.message}", e)
+        }
+    }
+
     /**
      * 모드팩 설치가 끝난 뒤 mods/ 폴더를 스캔해 Sodium 본체가 있으면 Podium 을 자동으로 끼워넣는다.
      *
@@ -451,6 +636,11 @@ class ContentPackBrowserActivity : BaseActivity() {
             return false
         }
 
+        if (contentType == ContentType.WORLD) {
+            _statusMessage.value = "맵 설치 중..."
+            return installWorld(rootFile, instanceDir, meta.mcVersion)
+        }
+
         // ── 2) MOD 타입이면 의존성 재귀 해결 ─────────────────────────
         val deps = if (contentType == ContentType.MOD) {
             withContext(Dispatchers.IO) {
@@ -475,6 +665,7 @@ class ContentPackBrowserActivity : BaseActivity() {
             ContentType.TEXTURE_PACK -> "resourcepacks"
             ContentType.SHADER_PACK  -> "shaderpacks"
             ContentType.MODPACK      -> "mods"
+            ContentType.WORLD        -> "saves"
         }
         val baseDir = if (isLegacyVersion(meta.mcVersion))
             instanceDir.resolve(".minecraft") else instanceDir
@@ -523,6 +714,11 @@ class ContentPackBrowserActivity : BaseActivity() {
                     else -> { }
                 }
             }
+        }
+
+        // ── 7) Fabric 인스턴스에 모드 설치 → Fabric API 보장 ──
+        if (allOk && contentType == ContentType.MOD && meta.loaderType?.lowercase() == "fabric") {
+            ensureFabricApiInstalled(instanceDir, meta.mcVersion)
         }
 
         return allOk
@@ -1017,30 +1213,6 @@ class ContentPackBrowserActivity : BaseActivity() {
         Log.d("PING_LAUNCHER", "✅ 모드팩 인스턴스 생성 완료: $instanceId (${finalMeta.loaderType ?: "vanilla"})")
     }
 
-    /** 텍스처팩/쉐이더팩 등 인스턴스 비종속 컨텐츠 설치 (글로벌 폴더에 저장) */
-    private suspend fun installResourceArtifact(mod: CurseForgeMod, contentType: ContentType) {
-        val file = withContext(Dispatchers.IO) {
-            fetchLatestFileForVersion(mod.id, gameVersion = null, loaderType = null)
-        } ?: return
-        val downloadUrl = file.downloadUrl
-        if (downloadUrl.isNullOrBlank()) {
-            Log.w("PING_LAUNCHER", "리소스/쉐이더 다운로드 URL 없음: mod=${mod.id}")
-            return
-        }
-
-        val subDir = when (contentType) {
-            ContentType.TEXTURE_PACK -> "resourcepacks"
-            ContentType.SHADER_PACK -> "shaderpacks"
-            else -> return
-        }
-        val root = getExternalFilesDir(null) ?: return
-        val outDir = root.resolve(subDir).also { it.mkdirs() }
-        withContext(Dispatchers.IO) {
-            downloadFile(downloadUrl, outDir.resolve(file.fileName), file.fileName)
-        }
-    }
-
-    // ───── 보조: CurseForge 파일 조회/다운로드 ─────
 
     /**
      * 특정 mod의 최신 호환 파일 선택.
