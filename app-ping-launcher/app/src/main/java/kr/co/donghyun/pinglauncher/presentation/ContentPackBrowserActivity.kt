@@ -853,7 +853,7 @@ class ContentPackBrowserActivity : BaseActivity() {
     /** 바닐라 인스턴스 생성 또는 재사용. 실패 시 null. */
     private suspend fun setupVanillaInstance(
         mcVersion: String,
-        versionEntry: kr.co.donghyun.pinglauncher.data.mojang.VersionEntry
+        versionEntry: VersionEntry
     ): String? {
         val instanceId = InstanceManager.vanillaId(mcVersion)
         val instanceDir = InstanceManager.instanceDir(this, instanceId)
@@ -1374,7 +1374,7 @@ class ContentPackBrowserActivity : BaseActivity() {
      * URL → destination 다운로드. 진행률은 _progress 로 publish.
      * DownloadProgress.current/total 이 Int 라서 KB 단위로 환산해 안전 범위 유지.
      */
-    private fun downloadFile(url: String, destination: java.io.File, displayName: String) {
+    private fun downloadFile(url: String, destination: File, displayName: String) {
         val req = Request.Builder().url(url).build()
         httpClient.newCall(req).execute().use { response ->
             val body = response.body ?: return
@@ -1499,7 +1499,7 @@ class ContentPackBrowserActivity : BaseActivity() {
         }
 
         val apkPath = applicationInfo.sourceDir
-        java.util.zip.ZipFile(apkPath).use { zip ->
+        ZipFile(apkPath).use { zip ->
             zip.entries().asSequence()
                 .filter { it.name.startsWith("lib/arm64-v8a/") && it.name.endsWith(".so") }
                 .forEach { entry ->

@@ -5,6 +5,7 @@ import java.io.*;
 import java.lang.reflect.Method;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Properties;
 import java.util.jar.JarFile;
@@ -37,7 +38,7 @@ public final class ProcessorLauncher {
 
         Properties p = new Properties();
         try (InputStream in = new FileInputStream(dataFile)) {
-            p.load(new InputStreamReader(in, "UTF-8"));
+            p.load(new InputStreamReader(in, StandardCharsets.UTF_8));
         }
 
         String realMainClass = require(p, "realMainClass");

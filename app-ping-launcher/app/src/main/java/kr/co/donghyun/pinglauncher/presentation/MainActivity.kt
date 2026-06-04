@@ -85,6 +85,7 @@ class MainActivity : BaseActivity() {
                     onToggleFilter = { _showOnlyRelease.value = !showOnlyRelease },
                     onDownloadAndPlay = { version -> startDownload(version) },
                     onLaunchFabric = { version, loader -> startFabricDownloadAndPlay(version, loader) },
+                    onLaunchForge  = { version, forgeVer -> startForgeDownloadAndPlay(version, forgeVer, isNeoForge = false) },
                     onOpenContents = { ContentPackBrowserActivity.start(this@MainActivity) },
                     onOpenKeySettings = { KeyboardLayoutEditorActivity.start(this@MainActivity) },
                     onOpenJVMSettings = { JvmSettingsActivity.start(this@MainActivity) },
@@ -225,6 +226,102 @@ class MainActivity : BaseActivity() {
         }
     }
 
+    private fun startForgeDownloadAndPlay(
+        version: VersionEntry,
+        forgeVersion: String,
+        isNeoForge: Boolean = false
+    ) {
+        val mcVersion = version.id
+        val loaderType = if (isNeoForge) "neoforge" else "forge"
+        val instanceId =
+            "${loaderType}_${mcVersion.replace('.', '_')}_${forgeVersion.replace('.', '_')}"
+        val instanceDir = InstanceManager.instanceDir(this, instanceId)
+        val internalBaseDir = applicationContext.filesDir
+        val nativesDir = File(internalBaseDir, "natives")
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                _progress.value = DownloadProgress(phase = DownloadPhase.FETCHING_MANIFEST)
+
+                // 1) 바닐라 MC 다운로드
+                val mcPreparer = MinecraftDownloader(
+                    instanceDir = instanceDir,
+                    versionEntry = version,
+                    onProgress = { _progress.value = it }
+                )
+                val manifest = mcPreparer.prepare()
+
+                // 2) Forge / NeoForge 설치
+                val forgeResult = kr.co.donghyun.pinglauncher.presentation.util.forge
+                    .ForgeInstaller(instanceDir) { msg, cur, tot ->
+                        _progress.value = DownloadProgress(
+                            phase = DownloadPhase.DOWNLOADING_LIBRARIES,
+                            current = cur, total = tot, fileName = msg
+                        )
+                    }.install(this@MainActivity, mcVersion, forgeVersion, isNeoForge = isNeoForge)
+
+                if (!forgeResult.success) {
+                    Log.e("PING_LAUNCHER", "Forge 설치 실패: ${forgeResult.error}")
+                    _progress.value = DownloadProgress(
+                        phase = DownloadPhase.ERROR,
+                        error = "Forge 설치 실패: ${forgeResult.error}"
+                    )
+                    return@launch
+                }
+
+                if (forgeResult.requiresProcessors) {
+                    Log.i(
+                        "PING_LAUNCHER",
+                        "Modern Forge — 첫 실행 시 ProcessorLauncher 가 client jar 패칭"
+                    )
+                }
+
+                // 3) natives & lwjgl
+                copyNativesFromApkLibDir(nativesDir)
+                copyLwjglJarFromAssets(internalBaseDir)
+                prePopulateLwjglExtractDir(internalBaseDir, nativesDir, mcVersion)
+
+                // 4) 빈 mods 폴더
+                File(instanceDir, "mods").mkdirs()
+
+                // 5) 인스턴스 메타 저장
+                InstanceManager.saveMeta(
+                    this@MainActivity,
+                    InstanceMeta(
+                        id = instanceId,
+                        name = "$mcVersion · ${if (isNeoForge) "NeoForge" else "Forge"} $forgeVersion",
+                        type = InstanceType.MODPACK,
+                        mcVersion = mcVersion,
+                        loaderType = loaderType,
+                        loaderVersion = forgeVersion,
+                        mainClass = forgeResult.mainClass,
+                        extraJars = forgeResult.extraJars,
+                        assetIndexId = manifest.assetIndexId,
+                        iconEmoji = if (isNeoForge) "🟢" else "🔥",
+                        gameJvmArgs = forgeResult.gameJvmArgs,
+                        gameArgs = forgeResult.gameArgs
+                    )
+                )
+
+                _progress.value = DownloadProgress(phase = DownloadPhase.DONE)
+
+                withContext(Dispatchers.Main) {
+                    MinecraftActivity.start(
+                        this@MainActivity,
+                        versionId = mcVersion,
+                        assetIndex = manifest.assetIndexId,
+                        extraJars = forgeResult.extraJars,
+                        mainClass = forgeResult.mainClass,
+                        instanceDir = instanceDir.absolutePath
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e("PING_LAUNCHER", "Forge 흐름 실패: ${e.message}", e)
+                _progress.value = DownloadProgress(phase = DownloadPhase.ERROR, error = e.message)
+            }
+        }
+    }
+
     private fun startFabricDownloadAndPlay(version: VersionEntry, loaderVersion: String) {
         val mcVersion = version.id
         val instanceId = InstanceManager.fabricId(mcVersion, loaderVersion)
@@ -274,7 +371,7 @@ class MainActivity : BaseActivity() {
                 // 5) 인스턴스 메타 저장
                 InstanceManager.saveMeta(
                     this@MainActivity,
-                    kr.co.donghyun.pinglauncher.data.instance.InstanceMeta(
+                    InstanceMeta(
                         id = instanceId,
                         name = "$mcVersion · Fabric $loaderVersion",
                         type = InstanceType.FABRIC,

@@ -29,6 +29,7 @@ data class ForgeInstallResult(
     val error: String? = null
 )
 
+
 /**
  * Forge installer.jar 를 직접 파싱해서 라이브러리와 launch profile 을 추출한다.
  *
@@ -129,9 +130,10 @@ class ForgeInstaller(
                         requiresProcessors = requiresProcessors,
                         jvmArgs = jvmArgs,
                         gameArgs = gameArgs,
-                        libs = versionLibs + installLibs
+                        libs = versionLibs,            // ★ version.json 만
+                        processorLibs = installLibs    // ★ install_profile.json 은 별도
                     ),
-                    installerFile, // 파일 핸들 유지
+                    installerFile,
                     Unit
                 )
             }
@@ -148,11 +150,27 @@ class ForgeInstaller(
 
         // ── 4) profile 의 라이브러리들 다운로드 ──────────────────────
         val jarList = mutableListOf<String>()
-        val total = profile.libs.size
+
+// 1) version.json libs — 디스크에 받고 classpath 에도 추가
+        val totalGame = profile.libs.size
         profile.libs.forEachIndexed { idx, lib ->
-            onProgress("Forge 라이브러리 ${idx + 1}/$total: ${lib.name}", idx + 1, total)
+            onProgress("Forge libs (game) ${idx + 1}/$totalGame: ${lib.name}", idx + 1, totalGame)
             downloadLibrary(lib, librariesDir)?.let { jarList.add(it.absolutePath) }
         }
+
+// 2) install_profile.json libs — 디스크엔 받되 classpath 에는 추가하지 않는다.
+//    ProcessorLauncher 가 자체 URLClassLoader 로 띄울 때만 필요.
+//    여기 jar 들 (ForgeAutoRenamingTool, BinaryPatcher, jarsplitter, installertools 등)
+//    은 ASM/Netty 등을 통합 포함한 fat jar 가 많아서 게임 classpath 에 두면
+//    BootstrapLauncher 의 자동 모듈 등록 단계에서 split package 충돌이 줄줄이 발생.
+        val totalProc = profile.processorLibs.size
+        profile.processorLibs.forEachIndexed { idx, lib ->
+            onProgress("Forge libs (processor) ${idx + 1}/$totalProc: ${lib.name}", idx + 1, totalProc)
+            downloadLibrary(lib, librariesDir)   // 반환값 무시 = jarList 에 안 더함
+        }
+
+        Log.d("PING_LAUNCHER",
+            "📦 Forge classpath = ${jarList.size}개 (processor-only=${profile.processorLibs.size}개는 디스크만)")
 
         // ── 5) legacy forge 면 universal jar 직접 다운로드 후 classpath 앞쪽에 ──
         if (profile.isLegacy) {
@@ -206,7 +224,8 @@ class ForgeInstaller(
         val requiresProcessors: Boolean,
         val jvmArgs: List<String>,
         val gameArgs: List<String>,
-        val libs: List<LibSpec>
+        val libs: List<LibSpec>,           // version.json libraries — classpath 들어감
+        val processorLibs: List<LibSpec>   // install_profile.json libraries — 다운만, classpath 제외
     )
 
     private data class LibSpec(
@@ -277,6 +296,7 @@ class ForgeInstaller(
         Log.w("PING_LAUNCHER", "라이브러리 다운로드 실패: ${lib.name}")
         return null
     }
+
 
     private fun downloadForgeUniversal(
         mcVersion: String, forgeVersion: String,

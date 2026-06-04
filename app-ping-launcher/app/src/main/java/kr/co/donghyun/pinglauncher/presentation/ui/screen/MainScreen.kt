@@ -49,6 +49,7 @@ fun MainScreen(
     onToggleFilter: () -> Unit,
     onDownloadAndPlay: (VersionEntry) -> Unit,
     onLaunchFabric: (VersionEntry, String) -> Unit,
+    onLaunchForge: (VersionEntry, String) -> Unit,
     onOpenContents: () -> Unit,
     onOpenKeySettings: () -> Unit,
     onOpenJVMSettings: () -> Unit,
@@ -183,7 +184,9 @@ fun MainScreen(
                     showLoaderDialog = false
                     onLaunchFabric(selectedVersion, loaderVersion)
                 },
-                onLaunchForge = { forgeVer ->
+                onLaunchForge = { forgeVer ->                       // ★ 채우기
+                    showLoaderDialog = false
+                    onLaunchForge(selectedVersion, forgeVer)
                 }
             )
         }
@@ -200,7 +203,7 @@ private fun SidePlayPanel(
     onPlayClick: () -> Unit,
     onLogin: () -> Unit,
 ) {
-    val isSupported = selectedVersion?.let { isVersionSupported(it.id) } ?: false
+    val isSupported = selectedVersion?.let { isVersionSupported(it.id) } == true
     val tablet = isTablet()
 
     // 💡 전체 요소를 Column으로 감싸줍니다.
@@ -491,7 +494,7 @@ fun BottomPanel(
     loginError: String?
 ) {
     // ── 기존 BottomPanel 본문 그대로 ──
-    val isSelectedSupported = selectedVersion?.let { isVersionSupported(it.id) } ?: false
+    val isSelectedSupported = selectedVersion?.let { isVersionSupported(it.id) } == true
     Column(
         modifier = modifier.fillMaxWidth().background(BgSurface)
             .border(1.dp, BgBorder, RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))

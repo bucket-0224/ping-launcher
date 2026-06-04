@@ -3,18 +3,14 @@ package kr.co.donghyun.pinglauncher.presentation
 import android.content.Context
 import android.content.Intent
 import android.util.Log
-import android.view.MotionEvent
 import android.view.Surface
-import android.view.WindowManager
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import kr.co.donghyun.pinglauncher.data.auth.MicrosoftAuthManager
+import kr.co.donghyun.pinglauncher.data.instance.InstanceManager
 import kr.co.donghyun.pinglauncher.data.jvm.JvmSettingsManager
 import kr.co.donghyun.pinglauncher.data.jvm.isLegacyVersion
 import kr.co.donghyun.pinglauncher.data.renderer.Renderer
@@ -23,10 +19,22 @@ import kr.co.donghyun.pinglauncher.presentation.base.BaseActivity
 import kr.co.donghyun.pinglauncher.presentation.ui.components.GameControllerView
 import kr.co.donghyun.pinglauncher.presentation.ui.components.MinecraftSurface
 import kr.co.donghyun.pinglauncher.presentation.ui.theme.PingLauncherTheme
-import kr.co.donghyun.pinglauncher.presentation.util.MinecraftActivityBridge
-import kr.co.donghyun.pinglauncher.presentation.util.minecraft.MinecraftJREPreparer
 import kr.co.donghyun.pinglauncher.presentation.util.jni.JavaNativeLauncher
-import org.lwjgl.glfw.GLFW.*
+import kr.co.donghyun.pinglauncher.presentation.util.minecraft.MinecraftJREPreparer
+import kr.co.donghyun.pinglauncher.presentation.util.renderer.VirGLLauncher
+import org.lwjgl.glfw.GLFW.GLFW_KEY_A
+import org.lwjgl.glfw.GLFW.GLFW_KEY_D
+import org.lwjgl.glfw.GLFW.GLFW_KEY_E
+import org.lwjgl.glfw.GLFW.GLFW_KEY_ENTER
+import org.lwjgl.glfw.GLFW.GLFW_KEY_ESCAPE
+import org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_CONTROL
+import org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_SHIFT
+import org.lwjgl.glfw.GLFW.GLFW_KEY_S
+import org.lwjgl.glfw.GLFW.GLFW_KEY_SPACE
+import org.lwjgl.glfw.GLFW.GLFW_KEY_TAB
+import org.lwjgl.glfw.GLFW.GLFW_KEY_W
+import org.lwjgl.glfw.GLFW.GLFW_PRESS
+import org.lwjgl.glfw.GLFW.GLFW_RELEASE
 import java.io.File
 
 
@@ -45,13 +53,22 @@ class MinecraftActivity : BaseActivity() {
     private var currentSurface: Surface? = null
     @Volatile var combatMode: Boolean = false
 
-
+    private val PROCESSOR_ONLY_JAR_PREFIXES = listOf(
+        "ForgeAutoRenamingTool",
+        "BinaryPatcher", "binarypatcher",
+        "jarsplitter",
+        "installertools",
+        "vignette",
+        "DiffPatch", "diffpatch",
+        "mergetool"   // ※ 부팅에 필요한 mergetool-*-api.jar 는 보존 필요 — 아래 헬퍼에서 별도 처리
+    )
 
     internal val isGrabbing: Boolean
         get() = try { nativeIsGrabbing() } catch (_: Exception) { false }
 
     private var jvmStarted = false
     private var javaMajor: Int = 21
+
 
     companion object {
         private const val EXTRA_VERSION_ID = "version_id"
@@ -254,6 +271,18 @@ class MinecraftActivity : BaseActivity() {
         }
     }
 
+    private fun resolveForgePlaceholders(
+        raw: String,
+        librariesDir: File,
+        nativesDir: File,
+        versionId: String
+    ): String = raw
+        .replace("\${library_directory}",   librariesDir.absolutePath)
+        .replace("\${libraries_directory}", librariesDir.absolutePath)   // 표기 둘 다 본 적 있음
+        .replace("\${classpath_separator}", File.pathSeparator)
+        .replace("\${version_name}",        versionId)
+        .replace("\${natives_directory}",   nativesDir.absolutePath)
+
 
     private fun startCrashWatcher() {
         val instanceBase = instanceDir?.let { File(it) }
@@ -355,7 +384,7 @@ class MinecraftActivity : BaseActivity() {
                                 visitLdcInsn("java.class.path")
                                 visitLdcInsn("")
                                 visitMethodInsn(org.objectweb.asm.Opcodes.INVOKESTATIC, "java/lang/System", "getProperty", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;", false)
-                                visitLdcInsn(java.io.File.pathSeparator)
+                                visitLdcInsn(File.pathSeparator)
                                 visitMethodInsn(org.objectweb.asm.Opcodes.INVOKEVIRTUAL, "java/lang/String", "split", "(Ljava/lang/String;)[Ljava/lang/String;", false)
                                 visitMethodInsn(org.objectweb.asm.Opcodes.INVOKESTATIC, "net/minecraft/launchwrapper/Launch", "pingStringsToUrls", "([Ljava/lang/String;)[Ljava/net/URL;", false)
                                 return
@@ -561,6 +590,57 @@ class MinecraftActivity : BaseActivity() {
         return "$group:$artifact"
     }
 
+    /**
+     * JLI(java 커맨드 파서)는 "--add-opens X" 같은 두-토큰 형식을 "--add-opens=X" 로
+     * 합쳐 JVM에 넘기지만, JNI_CreateJavaVM 직접 호출 경로엔 JLI 가 없다.
+     * 두 토큰 그대로 들어가면 JVM 은 "--add-opens" 만 보고 값을 못 찾아 그냥 무시한다
+     * (ignoreUnrecognized=JNI_TRUE 라 에러도 안 남). 그래서 여기서 미리 합쳐준다.
+     *
+     * 추가로 "-p" 는 JLI 전용 짧은 형이라 hotspot 자체는 못 알아먹음 → "--module-path" 로 정규화.
+     */
+    private val JLI_TWO_TOKEN_OPTS = setOf(
+        "--add-opens", "--add-exports", "--add-reads", "--add-modules",
+        "--patch-module", "--module-path", "-p", "--upgrade-module-path",
+        "--limit-modules", "--module", "-m"
+    )
+
+    private fun normalizeJvmArgsForJni(args: Array<String>): Array<String> {
+        val out = ArrayList<String>(args.size)
+        var i = 0
+        while (i < args.size) {
+            val a = args[i]
+            // 이미 "--add-opens=..." 처럼 = 가 붙어있으면 그대로
+            val isBare = a in JLI_TWO_TOKEN_OPTS
+            if (isBare && i + 1 < args.size) {
+                val v = args[i + 1]
+                val canonical = if (a == "-p") "--module-path" else a
+                out.add("$canonical=$v")
+                i += 2
+            } else {
+                out.add(a)
+                i++
+            }
+        }
+        return out.toTypedArray()
+    }
+
+    /**
+     * Pojav 의 patched `lwjgl-glfw-classes*.jar` 는 lwjgl 의 모든 서브패키지
+     * (glfw, opengl, openal, stb, system 등) 를 한 jar 에 통합한 fat jar.
+     * vanilla `lwjgl-openal-*.jar`, `lwjgl-opengl-*.jar` 등이 같이 classpath 에 있으면
+     * BootstrapLauncher 가 자동 모듈로 등록하다가 split package 폭발.
+     * → patched fat jar 만 남기고 나머지 vanilla lwjgl-* jar 들은 classpath 에서 제거.
+     */
+    private fun isRedundantLwjglJar(file: File): Boolean {
+        val n = file.name
+        // patched fat jar (e.g. "lwjgl-glfw-classes-3.3.1.jar") 는 무조건 keep
+        if (n.startsWith("lwjgl-glfw-classes", ignoreCase = true)) return false
+        // 네이티브 jar 는 어차피 안드로이드에서 못 씀 → 빼는 게 안전
+        if (n.contains("natives", ignoreCase = true) && n.startsWith("lwjgl", ignoreCase = true)) return true
+        // 그 외 lwjgl-3.3.1.jar, lwjgl-openal-*.jar, lwjgl-opengl-*.jar, lwjgl-stb-*.jar,
+        // lwjgl-tinyfd-*.jar, lwjgl-jemalloc-*.jar, lwjgl-freetype-*.jar … 전부 redundant
+        return n.startsWith("lwjgl-", ignoreCase = true) || n == "lwjgl.jar"
+    }
 
     private fun startMinecraft() {
         val base = applicationContext.filesDir
@@ -594,7 +674,7 @@ class MinecraftActivity : BaseActivity() {
         Log.d("PING_LAUNCHER", "instanceBase: ${instanceBase.absolutePath}")
 
         // 인스턴스 메타 로드 — Fabric의 gameJvmArgs/gameArgs 가져오기
-        val instanceMeta = kr.co.donghyun.pinglauncher.data.instance.InstanceManager.loadMeta(instanceBase)
+        val instanceMeta = InstanceManager.loadMeta(instanceBase)
         val isFabric = mainClass.contains("knot", ignoreCase = true)
                 || mainClass.contains("fabric", ignoreCase = true)
                 || instanceMeta?.loaderType == "fabric"
@@ -622,7 +702,15 @@ class MinecraftActivity : BaseActivity() {
             jarList.add(jar.absolutePath)
             Log.d("PING_LAUNCHER", "🔧 LWJGL jar 주입: ${jar.name}")
         }
-        jarList.addAll(0, extraJars)
+        val cleanedExtraJars = extraJars.filter { p ->
+            val f = File(p)
+            when {
+                isProcessorOnlyJar(f) -> { Log.d("PING_LAUNCHER", "🚫 extraJars processor-only 제거: ${f.name}"); false }
+                isRedundantLwjglJar(f) -> { Log.d("PING_LAUNCHER", "🚫 extraJars vanilla lwjgl 제거: ${f.name}"); false }
+                else -> true
+            }
+        }
+        jarList.addAll(0, cleanedExtraJars)
 
         val searchDirs = listOfNotNull(
             instanceBase,
@@ -645,6 +733,14 @@ class MinecraftActivity : BaseActivity() {
                     if (!f.isFile || f.extension != "jar") return@forEach
                     if (f.name.contains("natives-linux")) return@forEach
                     if (jarList.contains(f.absolutePath)) return@forEach
+                    if (isProcessorOnlyJar(f)) {
+                        Log.d("PING_LAUNCHER", "🚫 processor-only jar 제외: ${f.name}")
+                        return@forEach
+                    }
+                    if (isRedundantLwjglJar(f)) {                                  // ★ 추가
+                        Log.d("PING_LAUNCHER", "🚫 vanilla lwjgl jar 제외 (patched fat 만 keep): ${f.name}")
+                        return@forEach
+                    }
 
                     // 마인크래프트 번들 LWJGL은 PojavLauncher 패치 버전과 충돌하므로 제외
                     // PojavLauncher 패치 GLFW만 제외. core/opengl/openal 등 다른 LWJGL 모듈은
@@ -765,7 +861,62 @@ class MinecraftActivity : BaseActivity() {
             )
         } else emptyArray()
 
-        val metaJvmArgs = instanceMeta?.gameJvmArgs?.toTypedArray() ?: emptyArray()
+
+// ── Modern Forge / NeoForge 감지 (1.17+) ──
+        val isModernForge = (instanceMeta?.loaderType == "forge" || instanceMeta?.loaderType == "neoforge")
+                && (mainClass.startsWith("cpw.mods")
+                || mainClass.contains("BootstrapLauncher", ignoreCase = true))
+
+// ── ${library_directory} 등 placeholder 해석 ──
+        val forgeLibrariesDir = File(instanceBase, "libraries")
+        val metaJvmArgsRaw = (instanceMeta?.gameJvmArgs ?: emptyList())
+            .map { raw ->
+                raw
+                    .replace("\${library_directory}",   forgeLibrariesDir.absolutePath)
+                    .replace("\${libraries_directory}", forgeLibrariesDir.absolutePath)
+                    .replace("\${classpath_separator}", File.pathSeparator)
+                    .replace("\${version_name}",        versionId)
+                    .replace("\${natives_directory}",   nativesDir.absolutePath)
+            }
+
+// ── BootstrapLauncher 의 -DignoreList 에 LWJGL 들 추가 ──
+//   PojavLauncher patched lwjgl-glfw-classes.jar 는 다른 LWJGL 서브모듈(openal, opengl 등)
+//   클래스도 통합 포함되어 있어서 자동 모듈로 잡히면 split package 충돌 발생.
+//   ignoreList 에 prefix 매칭시키면 classpath unnamed module 로 남아 충돌 회피.
+        val metaJvmArgs: Array<String> = metaJvmArgsRaw.map { arg ->
+            if (isModernForge && arg.startsWith("-DignoreList=")) {
+                // 이미 들어있는지 확인 후 없으면 추가. lwjgl 한 prefix 로 lwjgl-glfw-classes,
+                // lwjgl-openal, lwjgl-opengl, lwjgl-stb 등 한 번에 커버.
+                val needed = listOf(
+                    "ForgeAutoRenamingTool", "BinaryPatcher", "binarypatcher",
+                    "jarsplitter", "installertools", "vignette", "DiffPatch", "diffpatch"
+                ).filterNot { arg.contains(",$it") || arg.endsWith("=$it") }
+
+                if (needed.isNotEmpty()) {
+                    val patched = arg + "," + needed.joinToString(",")
+                    Log.d("PING_LAUNCHER", "🩹 ignoreList 보강: +${needed.joinToString(",")}")
+                    patched
+                } else arg
+            } else arg
+        }.toTypedArray()
+
+// ── Modern Forge fallback: 모듈 안 로드돼도 reflection 통과시키는 ALL-UNNAMED opens ──
+        val modernForgeArgs: Array<String> = if (isModularJre && isModernForge) {
+            arrayOf(
+                "--add-opens", "java.base/java.util.jar=ALL-UNNAMED",
+                "--add-opens", "java.base/java.lang.invoke=ALL-UNNAMED",
+                "--add-opens", "java.base/java.lang=ALL-UNNAMED",
+                "--add-opens", "java.base/java.lang.reflect=ALL-UNNAMED",
+                "--add-opens", "java.base/java.net=ALL-UNNAMED",
+                "--add-opens", "java.base/java.io=ALL-UNNAMED",
+                "--add-opens", "java.base/sun.nio.ch=ALL-UNNAMED",
+                "--add-exports", "java.base/sun.security.util=ALL-UNNAMED",
+                "--add-exports", "jdk.naming.dns/com.sun.jndi.dns=java.naming",
+            )
+        } else emptyArray()
+
+        Log.d("PING_LAUNCHER",
+            "isModernForge=$isModernForge metaJvmArgs(resolved)=${metaJvmArgs.toList()}")
 
         val rendererPreference = RendererManager.load(this@MinecraftActivity)
         // MinecraftActivity.startMinecraft 안에서
@@ -790,15 +941,49 @@ class MinecraftActivity : BaseActivity() {
 
         Log.i("PingLauncherJVM", "🎨 Selected glLibName=$glLibName (renderer=${renderer.id})")
 
-        val jvmArgs = jvm8CompatArgs + jvmSettings.toJvmArgArray(
-            context = this,
-            mcDir = mcDir,
-            userDir = mcDir.absolutePath,
-            classPath = jarList.joinToString(":"),
-            libraryPath = nativesDir.absolutePath,
-            mainClass = mainClass,
-            versionId = versionId
-        ) + launchWrapperArgs + fabricJvmArgs + metaJvmArgs
+        // ── classpath 중복 제거 ─────────────────────────────────────
+        //   Modern Forge 는 version.json 과 install_profile.json 양쪽에 같은
+        //   라이브러리 좌표(특히 fmlloader)를 기재하는 경우가 있다. 결과적으로
+        //   jarList 에 같은 절대경로가 두 번 들어가고, BootstrapLauncher 가
+        //   UnionFileSystem 에 같은 path 를 두 번 등록하려다 IllegalStateException 으로 죽는다.
+        //
+        //   1) 같은 절대경로 dedupe — 가장 흔한 케이스
+        //   2) 같은 파일명(= 같은 group:artifact:version) dedupe — 다른 디렉토리로
+        //      들어온 동일 jar 보호 (예: extraJars vs walkTopDown)
+        val seenAbs = HashSet<String>()
+        val seenFileName = HashSet<String>()
+        val originalSize = jarList.size
+        val dedupedJars = jarList.filter { abs ->
+            if (!seenAbs.add(abs)) {
+                Log.d("PING_LAUNCHER", "🗑 절대경로 중복 jar 제거: $abs")
+                return@filter false
+            }
+            val fname = File(abs).name
+            if (!seenFileName.add(fname)) {
+                Log.d("PING_LAUNCHER", "🗑 동일 파일명 jar 중복 제거: $fname (이미 다른 경로에 있음)")
+                return@filter false
+            }
+            true
+        }
+        if (dedupedJars.size != originalSize) {
+            Log.d("PING_LAUNCHER", "📦 classpath dedupe: $originalSize → ${dedupedJars.size}")
+        }
+        val classPathStr = dedupedJars.joinToString(":")
+
+        val jvmArgs = jvm8CompatArgs +
+                jvmSettings.toJvmArgArray(
+                    context = this,
+                    mcDir = mcDir,
+                    userDir = mcDir.absolutePath,
+                    classPath = classPathStr,
+                    libraryPath = nativesDir.absolutePath,
+                    mainClass = mainClass,
+                    versionId = versionId
+                ) +
+                launchWrapperArgs +
+                fabricJvmArgs +
+                modernForgeArgs +     // ★ 추가 — metaJvmArgs 보다 앞에 둬서 version.json 인자가 덮어쓰도록
+                metaJvmArgs
 
         Log.d("PING_LAUNCHER", "버전: $versionId, mcDir: ${mcDir.absolutePath}, isFabric=$isFabric, javaMajor=$javaMajor")
 
@@ -871,8 +1056,7 @@ class MinecraftActivity : BaseActivity() {
                 ).toMutableMap().apply {
                     if (renderer.id == "virgl") {
                         this["VTEST_SOCKET_NAME"] =
-                            kr.co.donghyun.pinglauncher.presentation.util.renderer
-                                .VirGLLauncher.socketPath(this@MinecraftActivity)
+                            VirGLLauncher.socketPath(this@MinecraftActivity)
                     }
                 }
 
@@ -880,7 +1064,16 @@ class MinecraftActivity : BaseActivity() {
                 rendererEnv.forEach { (k, v) -> Log.d("PING_LAUNCHER", "  env $k=$v") }
                 launcher.applyEnv(rendererEnv)
 
-                launcher.bootMinecraftJVM(libJvmPath, jvmArgs, mcArgs)
+                val normalizedJvmArgs = normalizeJvmArgsForJni(jvmArgs)
+
+                Log.d("PING_LAUNCHER", "정규화 후 JVM 인자 ${normalizedJvmArgs.size}개")
+                normalizedJvmArgs.forEachIndexed { idx, a ->
+                    if (a.startsWith("--add-") || a.startsWith("--module-path") || a.startsWith("--patch-module")) {
+                        Log.d("PING_LAUNCHER", "  [$idx] $a")
+                    }
+                }
+
+                launcher.bootMinecraftJVM(libJvmPath, normalizedJvmArgs, mcArgs)
             } catch (e: Exception) {
                 Log.e("PING_LAUNCHER", "MC 실행 예외: ${e.message}")
             } finally {
@@ -929,6 +1122,14 @@ class MinecraftActivity : BaseActivity() {
         return true
     }
 
+
+    private fun isProcessorOnlyJar(file: File): Boolean {
+        val name = file.name
+        // mergetool 은 두 종류 — "*-api.jar" 는 게임 부팅에도 필요하니 보존
+        if (name.startsWith("mergetool", ignoreCase = true) && name.endsWith("-api.jar")) return false
+        return PROCESSOR_ONLY_JAR_PREFIXES.any { name.startsWith(it, ignoreCase = true) }
+    }
+
     fun androidKeyToGlfw(keyCode: Int): Int? = when (keyCode) {
         android.view.KeyEvent.KEYCODE_W -> GLFW_KEY_W
         android.view.KeyEvent.KEYCODE_A -> GLFW_KEY_A
@@ -963,7 +1164,7 @@ class MinecraftActivity : BaseActivity() {
             val jarNames = assets.list("lwjgl3") ?: return
             for (jarName in jarNames) {
                 if (!jarName.endsWith(".jar")) continue
-                val target = java.io.File(targetDir, jarName)
+                val target = File(targetDir, jarName)
                 if (target.exists() && target.length() > 0) continue
                 assets.open("lwjgl3/$jarName").use { input ->
                     target.outputStream().use { output -> input.copyTo(output) }

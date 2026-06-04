@@ -121,7 +121,7 @@ class CurseForgeAPI {
         return try {
             client.newCall(request).execute().use { response ->
                 val json = response.body?.string() ?: return null
-                val type = object : com.google.gson.reflect.TypeToken<CurseForgeResponse<CurseForgeFile>>() {}.type
+                val type = object : TypeToken<CurseForgeResponse<CurseForgeFile>>() {}.type
                 val resp = gson.fromJson<CurseForgeResponse<CurseForgeFile>>(json, type)
                 resp?.data?.downloadUrl
             }
