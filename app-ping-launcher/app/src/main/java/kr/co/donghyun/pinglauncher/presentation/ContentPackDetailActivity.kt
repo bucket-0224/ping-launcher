@@ -135,6 +135,8 @@ class ContentPackDetailActivity : BaseActivity() {
             ContentType.valueOf(intent.getStringExtra(EXTRA_CONTENT_TYPE) ?: ContentType.MODPACK.name)
         }.getOrDefault(ContentType.MODPACK)
 
+        _isInstalled.value = isContentInstalled(modId, modName)
+
         val instanceId = InstanceManager.modpackId(modName)
         val instanceDir = InstanceManager.instanceDir(this, instanceId)
         _isInstalled.value = instanceDir.resolve("instance.json").exists()
@@ -377,6 +379,13 @@ class ContentPackDetailActivity : BaseActivity() {
         }
 
         return ContentDetail(screenshots = screenshots, description = description, rawHtml = rawHtmlWebView)
+    }
+
+    private fun isContentInstalled(modId: Int, modName: String): Boolean {
+        if (modId < 0) return false
+        return InstanceManager.listInstances(this).any { meta ->
+            meta.sourceModId == modId || (meta.sourceModId == null && meta.name == modName)
+        }
     }
 }
 

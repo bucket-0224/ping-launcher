@@ -18,7 +18,8 @@ data class InstanceMeta(
     val assetIndexId: String = "",
     val iconEmoji: String = "🌿",
     val gameJvmArgs: List<String> = emptyList(), // Fabric profile의 arguments.jvm
-    val gameArgs: List<String> = emptyList()     // Fabric profile의 arguments.game
+    val gameArgs: List<String> = emptyList(),    // Fabric profile의 arguments.game
+    val sourceModId: Int? = null,
 )
 
 object InstanceManager {

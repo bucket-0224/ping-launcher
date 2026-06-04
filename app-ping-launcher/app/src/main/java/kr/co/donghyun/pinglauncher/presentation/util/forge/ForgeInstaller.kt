@@ -434,10 +434,16 @@ class ForgeInstaller(
 
     /**
      * install_profile.json 의 값 한 개를 해석.
+     *
+     * 분기는 반드시 **원본 s 의 prefix** 로 결정한다. 변수 치환 결과가 우연히
+     * '/' 로 시작해도 그건 디스크 절대경로지 installer JAR 내부 경로가 아니다.
+     * (이전 버그: `{MAPPINGS}` → 치환 후 `/storage/.../mappings.txt` 가 되어
+     *  `/` prefix 라고 오판 → installer 안에서 디스크 경로 찾다가 실패)
+     *
      *  - `[g:a:v[:c[@ext]]]` → libraries 상의 실제 파일 경로
      *  - `/data/foo.lzma`     → installer.jar 안의 항목을 instance/data/foo.lzma 로 추출
-     *  - `'리터럴'`           → 그대로 (따옴표 제거)
-     *  - `{VAR}`              → varMap 치환
+     *  - `'리터럴'`           → 따옴표 제거
+     *  - 그 외                → 변수 치환만
      */
     private fun resolveValue(
         s: String,
@@ -445,21 +451,27 @@ class ForgeInstaller(
         installerFile: File,
         instanceDir: File,
         varMap: Map<String, String>
-    ): String {
-        // 1) {VAR} 치환 먼저
-        val varExpanded = Regex("\\{([A-Z_][A-Z0-9_]*)}").replace(s) { m ->
+    ): String = when {
+        s.startsWith("[") && s.endsWith("]") -> {
+            val expanded = expandVars(s, varMap)
+            mavenCoordToPath(expanded.substring(1, expanded.length - 1), librariesDir)
+        }
+        s.startsWith("/") -> {
+            // installer JAR 내부 경로. 변수 치환을 거쳐도 여전히 내부 경로 의미.
+            val expanded = expandVars(s, varMap)
+            extractFromInstaller(installerFile, expanded.removePrefix("/"), instanceDir)
+        }
+        s.startsWith("'") && s.endsWith("'") ->
+            expandVars(s.substring(1, s.length - 1), varMap)
+        else ->
+            expandVars(s, varMap)
+    }
+
+    /** {VAR_NAME} 토큰을 varMap 값으로 치환. ICU regex 호환을 위해 양쪽 중괄호 모두 escape. */
+    private fun expandVars(s: String, varMap: Map<String, String>): String =
+        Regex("\\{([A-Z_][A-Z0-9_]*)\\}").replace(s) { m ->
             varMap[m.groupValues[1]] ?: m.value
         }
-        return when {
-            varExpanded.startsWith("[") && varExpanded.endsWith("]") ->
-                mavenCoordToPath(varExpanded.substring(1, varExpanded.length - 1), librariesDir)
-            varExpanded.startsWith("/") ->
-                extractFromInstaller(installerFile, varExpanded.removePrefix("/"), instanceDir)
-            varExpanded.startsWith("'") && varExpanded.endsWith("'") ->
-                varExpanded.substring(1, varExpanded.length - 1)
-            else -> varExpanded
-        }
-    }
 
     private fun mavenCoordToPath(coord: String, librariesDir: File): String {
         // "g:a:v" / "g:a:v:c" / "g:a:v:c@ext" / "g:a:v@ext"

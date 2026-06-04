@@ -35,6 +35,8 @@ import kr.co.donghyun.pinglauncher.presentation.base.BaseActivity
 import kr.co.donghyun.pinglauncher.presentation.ui.screen.ContentPackBrowserScreen
 import kr.co.donghyun.pinglauncher.presentation.ui.screen.ContentType
 import kr.co.donghyun.pinglauncher.presentation.ui.theme.PingLauncherTheme
+import kr.co.donghyun.pinglauncher.presentation.util.curseforge.CurseForgeAPI
+import kr.co.donghyun.pinglauncher.presentation.util.curseforge.ModPackInstaller
 import kr.co.donghyun.pinglauncher.presentation.util.fabric.FabricInstaller
 import kr.co.donghyun.pinglauncher.presentation.util.fabric.FabricMetaAPI
 import kr.co.donghyun.pinglauncher.presentation.util.forge.ForgeInstaller
@@ -71,7 +73,7 @@ class ContentPackBrowserActivity : BaseActivity() {
     private val _hasMore = MutableStateFlow(true)
 
     // CurseForge Podium project ID (modrinth: "podium", CF slug: "podium-sodium")
-    private val PODIUM_MOD_ID = 1209829   // ← CurseForge "Podium (Pojav x Sodium)"
+    private val PODIUM_MOD_ID = 1241894   // ← CurseForge "Podium (Pojav x Sodium)"
 
     // ───── 내부 상태 ─────
     private var currentQuery: String = ""
@@ -302,6 +304,83 @@ class ContentPackBrowserActivity : BaseActivity() {
             }
         }
     }
+    /**
+     * 모드팩 설치가 끝난 뒤 mods/ 폴더를 스캔해 Sodium 본체가 있으면 Podium 을 자동으로 끼워넣는다.
+     *
+     * 트리거 조건:
+     *  - loader 가 fabric 또는 neoforge 일 것 (Podium 은 Forge / vanilla 미지원)
+     *  - mods/ 에 Sodium 본체 jar 가 있을 것 (Sodium Extra / Reese's Sodium Options / Indium 등은 제외)
+     *  - 이미 podium*.jar 가 있다면 스킵 (모드팩이 이미 포함시킨 경우)
+     *
+     * Podium 빌드 선택은 mc + loader 정확 매칭 → loader 만 매칭 → 최신 무조건 폴백 (Podium 은
+     * 호환성 패치 모드라 mc 버전 잠그지 않아도 동작하는 경우가 대부분).
+     */
+    private suspend fun installPodiumIfSodiumInModpack(
+        instanceDir: File,
+        mcVersion: String,
+        loaderType: String?,
+    ) {
+        val normalizedLoader = loaderType?.lowercase()
+        if (normalizedLoader !in setOf("fabric", "neoforge")) {
+            Log.d("PING_LAUNCHER", "🩹 Podium augment 스킵 — loader=$normalizedLoader (Fabric/NeoForge 만 지원)")
+            return
+        }
+
+        val modsDir = instanceDir.resolve("mods")
+        if (!modsDir.exists()) return
+
+        val jars = modsDir.listFiles()
+            ?.filter { it.isFile && it.extension == "jar" }
+            ?: return
+
+        // Sodium 본체만 트리거 — addon 류는 무시
+        // 파일명 prefix 가 정확히 "sodium" / "sodium-fabric" / "sodium-neoforge" 중 하나일 때만
+        val sodiumPrefixes = setOf("sodium", "sodium-fabric", "sodium-neoforge")
+        val sodiumJar = jars.firstOrNull { f ->
+            extractModFilePrefix(f.name).lowercase() in sodiumPrefixes
+        }
+        if (sodiumJar == null) {
+            Log.d("PING_LAUNCHER", "🩹 모드팩 mods/ 에 Sodium 본체 없음 — Podium augment 불필요")
+            return
+        }
+
+        val hasPodium = jars.any { it.name.startsWith("podium", ignoreCase = true) }
+        if (hasPodium) {
+            Log.d("PING_LAUNCHER", "🩹 모드팩에 Podium 이미 포함됨 (${jars.first { it.name.startsWith("podium", true) }.name}) — 스킵")
+            return
+        }
+
+        Log.d("PING_LAUNCHER",
+            "🩹 모드팩 Sodium 감지(${sodiumJar.name}) → Podium 자동 추가 시도 (mc=$mcVersion, loader=$normalizedLoader)")
+
+        val podiumFile = withContext(Dispatchers.IO) {
+            fetchLatestFileForVersion(PODIUM_MOD_ID, mcVersion, normalizedLoader)
+                ?: fetchLatestFileForVersion(PODIUM_MOD_ID, gameVersion = null, loaderType = normalizedLoader)?.also {
+                    Log.w("PING_LAUNCHER",
+                        "🩹 Podium: mc=$mcVersion 매칭 실패 → loader=$normalizedLoader 최신(${it.fileName})으로 폴백")
+                }
+                ?: fetchLatestFileForVersion(PODIUM_MOD_ID, gameVersion = null, loaderType = null)?.also {
+                    Log.w("PING_LAUNCHER",
+                        "🩹 Podium: loader 매칭도 실패 → 가장 최신(${it.fileName})으로 폴백")
+                }
+        } ?: run {
+            Log.w("PING_LAUNCHER", "🩹 Podium 호환 파일 못 찾음 — 스킵")
+            return
+        }
+
+        val outFile = modsDir.resolve(podiumFile.fileName)
+        if (outFile.exists() && outFile.length() == podiumFile.fileLength && podiumFile.fileLength > 0) {
+            Log.d("PING_LAUNCHER", "🩹 Podium 이미 같은 파일 존재 — 스킵")
+            return
+        }
+        try {
+            val url = resolveDownloadUrl(podiumFile)
+            withContext(Dispatchers.IO) { downloadFile(url, outFile, podiumFile.fileName) }
+            Log.d("PING_LAUNCHER", "🩹 Podium 자동 설치 완료: ${podiumFile.fileName}")
+        } catch (e: Exception) {
+            Log.e("PING_LAUNCHER", "🩹 Podium 다운로드 실패: ${e.message}", e)
+        }
+    }
 
     /**
      * Sodium 이 설치 대상에 있고, Podium 이 아직 없으면 Podium 도 같이 받도록 보강.
@@ -323,11 +402,28 @@ class ContentPackBrowserActivity : BaseActivity() {
             return items
         }
 
-        val podiumMod  = fetchModInfo(PODIUM_MOD_ID) ?: return items
-        val podiumFile = fetchLatestFileForVersion(PODIUM_MOD_ID, mcVersion, loaderType) ?: run {
-            Log.w("PING_LAUNCHER", "Podium 호환 파일 못 찾음 mc=$mcVersion loader=$loaderType")
-            return items
-        }
+        val podiumMod = fetchModInfo(PODIUM_MOD_ID) ?: return items
+
+        // ── Podium 은 mcVersion 정확 매칭 실패 시 최신 빌드로 폴백 ──
+        //   호환성 패치 모드라 굳이 버전 잠그지 않아도 동작하는 경우가 대부분이라
+        //   여기서만 예외적으로 "최신 아무거나"를 허용한다.
+        //   1) mc + loader 정확 매칭
+        //   2) loader 만 맞추고 최신
+        //   3) 그것마저 없으면 아무거나 최신
+        val podiumFile = fetchLatestFileForVersion(PODIUM_MOD_ID, mcVersion, loaderType)
+            ?: fetchLatestFileForVersion(PODIUM_MOD_ID, gameVersion = null, loaderType = loaderType)?.also {
+                Log.w("PING_LAUNCHER",
+                    "🩹 Podium: mc=$mcVersion 호환 파일 없음 → loader=$loaderType 최신(${it.fileName})으로 폴백")
+            }
+            ?: fetchLatestFileForVersion(PODIUM_MOD_ID, gameVersion = null, loaderType = null)?.also {
+                Log.w("PING_LAUNCHER",
+                    "🩹 Podium: loader=$loaderType 매칭도 실패 → 가장 최신 빌드(${it.fileName})로 폴백")
+            }
+            ?: run {
+                Log.w("PING_LAUNCHER", "Podium 파일 자체를 못 찾음 — 스킵")
+                return items
+            }
+
         Log.d("PING_LAUNCHER", "🩹 Sodium 감지 → Podium 자동 추가: ${podiumFile.fileName}")
         return items + (podiumMod to podiumFile)
     }
@@ -592,7 +688,7 @@ class ContentPackBrowserActivity : BaseActivity() {
             mainClass = mcResult.mainClass,
             assetIndexId = mcResult.assetIndexId,
             iconEmoji = "🌿",
-            gameArgs = legacyArgs
+            gameArgs = legacyArgs,
         ))
         return instanceId
     }
@@ -737,34 +833,188 @@ class ContentPackBrowserActivity : BaseActivity() {
         return instanceId
     }
 
-    /** 모드팩 설치 (자체 인스턴스 생성). zip 추출/매니페스트 처리는 별도 인스톨러로 위임. */
+    /**
+     * 모드팩을 자체 인스턴스로 설치한다.
+     *
+     * 흐름:
+     *  1) ModPackInstaller — zip 받고 manifest 파싱 → mcVersion / loader 정보 얻고
+     *     overrides 풀고 필수 모드들 mods/ 에 다 떨군다.
+     *  2) MinecraftDownloader — manifest 의 mcVersion 으로 바닐라 client / libraries / assets 받음
+     *  3) 로더 종류에 따라 FabricInstaller / ForgeInstaller 로 로더 본체 설치
+     *  4) InstanceMeta 저장 — mainClass / extraJars / gameJvmArgs / gameArgs 까지 채워서
+     *     실행 단계에서 추가 작업 없이 바로 부팅 가능하게 한다.
+     *
+     * 실패하면 phase=ERROR 로 상태 publish 하고 즉시 종료. 부분 성공 시에도 InstanceMeta 는
+     * 이미 ModPackInstaller 가 한 번 저장하므로, 사용자가 같은 모드팩을 다시 누르면
+     * `loaderType != null` 캐시 체크로 zip 재다운로드는 스킵된다.
+     */
     private suspend fun installModpack(mod: CurseForgeMod) {
         val instanceId = InstanceManager.modpackId(mod.name)
+        val instanceDir = InstanceManager.instanceDir(this, instanceId).also { it.mkdirs() }
+
+        // ── 0) 어떤 파일(=어떤 모드팩 버전) 받을지 결정 ─────────────
         val file = withContext(Dispatchers.IO) {
             fetchLatestFileForVersion(mod.id, gameVersion = null, loaderType = null)
-        } ?: return
-        val downloadUrl = resolveDownloadUrl(file)
-        if (downloadUrl.isBlank()) {
-            Log.w("PING_LAUNCHER", "모드팩 다운로드 URL 없음: mod=${mod.id}")
+        } ?: run {
+            Log.e("PING_LAUNCHER", "❌ 모드팩 파일 정보 못 가져옴: mod=${mod.id}")
+            _statusMessage.value = "❌ ${mod.name} 파일 정보를 가져올 수 없음"
+            _progress.value = DownloadProgress(phase = DownloadPhase.ERROR, error = "파일 정보 없음")
             return
         }
 
-        // mcVersion / loaderType 은 모드팩 매니페스트(manifest.json)에서 정확하게 가져와야 하지만,
-        // 매니페스트 추출 전 임시로 gameVersions 필드에서 추정. 추출 후 saveMeta 재호출로 보정 권장.
-        val meta = InstanceMeta(
-            id = instanceId,
-            name = mod.name,
-            type = InstanceType.MODPACK,
-            mcVersion = file.primaryMcVersion() ?: "",
-            loaderType = file.primaryLoader()
-        )
-        InstanceManager.saveMeta(this, meta)
-
-        val dir = InstanceManager.instanceDir(this, instanceId).also { it.mkdirs() }
-        withContext(Dispatchers.IO) {
-            downloadFile(downloadUrl, dir.resolve(file.fileName), file.fileName)
+        // ── 1) 모드팩 zip 다운로드 + manifest 파싱 + overrides + 필수 모드들 ──
+        _statusMessage.value = "${mod.name} 모드팩 추출 중..."
+        val packResult = withContext(Dispatchers.IO) {
+            ModPackInstaller(
+                baseDir = instanceDir,
+                curseForgeApi = CurseForgeAPI(),
+                onProgress = { _progress.value = it }
+            ).install(mod, file.id, mcVersionOverride = file.primaryMcVersion())
         }
-        // TODO: zip 추출 및 manifest.json 기반 모드/오버라이드 처리는 ModpackInstaller에 위임
+        if (!packResult.success) {
+            Log.e("PING_LAUNCHER", "❌ ModPackInstaller 실패: ${packResult.error}")
+            _statusMessage.value = "❌ 모드팩 추출 실패: ${packResult.error}"
+            _progress.value = DownloadProgress(phase = DownloadPhase.ERROR, error = packResult.error)
+            return
+        }
+
+        val mcVersion = packResult.mcVersion
+        val loaderType = packResult.loaderType?.lowercase()
+        val loaderVersion = packResult.loaderVersion
+        Log.d("PING_LAUNCHER", "📦 모드팩 파싱: mc=$mcVersion, loader=$loaderType $loaderVersion")
+
+        // ── 1.5) Sodium 본체가 모드팩에 있으면 Podium 자동 동봉 ──
+        _statusMessage.value = "Sodium 호환 점검 중..."
+        installPodiumIfSodiumInModpack(instanceDir, mcVersion, loaderType)
+
+        // ── 2) Mojang manifest 에서 해당 MC 버전 entry 확보 ─────────
+        val versionEntry = withContext(Dispatchers.IO) {
+            runCatching { VersionRepository().fetchVersionList().firstOrNull { it.id == mcVersion } }
+                .getOrNull()
+        } ?: run {
+            Log.e("PING_LAUNCHER", "❌ MC $mcVersion manifest 없음")
+            _statusMessage.value = "❌ MC $mcVersion 매니페스트를 찾을 수 없음"
+            _progress.value = DownloadProgress(phase = DownloadPhase.ERROR, error = "MC manifest 없음")
+            return
+        }
+
+        // ── 3) 바닐라 MC 다운로드 (인스턴스 dir 안으로) ─────────────
+        _statusMessage.value = "MC $mcVersion 다운로드 중..."
+        val mcResult = withContext(Dispatchers.IO) {
+            MinecraftDownloader(instanceDir, versionEntry) { _progress.value = it }.prepare()
+        }
+
+        // ── 4) 로더 설치 + 최종 InstanceMeta 조립 ───────────────────
+        val finalMeta: InstanceMeta = when (loaderType) {
+            "fabric" -> {
+                if (loaderVersion.isNullOrBlank()) {
+                    _statusMessage.value = "❌ Fabric loader 버전이 manifest 에 없음"
+                    return
+                }
+                _statusMessage.value = "Fabric $loaderVersion 설치 중..."
+                val fr = withContext(Dispatchers.IO) {
+                    FabricInstaller(instanceDir) { msg, cur, tot ->
+                        _progress.value = DownloadProgress(
+                            phase = DownloadPhase.DOWNLOADING_LIBRARIES,
+                            current = cur, total = tot, fileName = msg
+                        )
+                    }.install(mcVersion, loaderVersion)
+                }
+                if (!fr.success) {
+                    Log.e("PING_LAUNCHER", "❌ Fabric 설치 실패: ${fr.error}")
+                    _statusMessage.value = "❌ Fabric 설치 실패: ${fr.error}"
+                    _progress.value = DownloadProgress(phase = DownloadPhase.ERROR, error = fr.error)
+                    return
+                }
+                InstanceMeta(
+                    id = instanceId,
+                    name = mod.name,
+                    type = InstanceType.MODPACK,
+                    mcVersion = mcVersion,
+                    loaderType = "fabric",
+                    loaderVersion = loaderVersion,
+                    mainClass = fr.mainClass,
+                    extraJars = fr.extraJars,
+                    assetIndexId = mcResult.assetIndexId,
+                    iconEmoji = "🧵",
+                    gameJvmArgs = fr.gameJvmArgs,
+                    gameArgs = fr.gameArgs,
+                    sourceModId = mod.id,
+                )
+            }
+
+            "forge", "neoforge" -> {
+                if (loaderVersion.isNullOrBlank()) {
+                    _statusMessage.value = "❌ $loaderType loader 버전이 manifest 에 없음"
+                    return
+                }
+                val isNeoForge = loaderType == "neoforge"
+                val label = if (isNeoForge) "NeoForge" else "Forge"
+                _statusMessage.value = "$label $loaderVersion 설치 중..."
+                val fr = withContext(Dispatchers.IO) {
+                    ForgeInstaller(instanceDir) { msg, cur, tot ->
+                        _progress.value = DownloadProgress(
+                            phase = DownloadPhase.DOWNLOADING_LIBRARIES,
+                            current = cur, total = tot, fileName = msg
+                        )
+                    }.install(this@ContentPackBrowserActivity, mcVersion, loaderVersion, isNeoForge = isNeoForge)
+                }
+                if (!fr.success) {
+                    Log.e("PING_LAUNCHER", "❌ $label 설치 실패: ${fr.error}")
+                    _statusMessage.value = "❌ $label 설치 실패: ${fr.error}"
+                    _progress.value = DownloadProgress(phase = DownloadPhase.ERROR, error = fr.error)
+                    return
+                }
+                if (fr.requiresProcessors) {
+                    Log.i("PING_LAUNCHER", "ℹ️ Modern $label — 첫 실행 시 ProcessorLauncher 가 client jar 패칭")
+                }
+                InstanceMeta(
+                    id = instanceId,
+                    name = mod.name,
+                    type = InstanceType.MODPACK,
+                    mcVersion = mcVersion,
+                    loaderType = loaderType,
+                    loaderVersion = loaderVersion,
+                    mainClass = fr.mainClass,
+                    extraJars = fr.extraJars,
+                    assetIndexId = mcResult.assetIndexId,
+                    iconEmoji = if (isNeoForge) "🟢" else "🔥",
+                    gameJvmArgs = fr.gameJvmArgs,
+                    gameArgs = fr.gameArgs,
+                    sourceModId = mod.id,
+                )
+            }
+
+            else -> {
+                // 모드팩에 로더가 명시 안 됐거나 ModPackInstaller 가 식별 못 한 경우 —
+                // 그냥 바닐라로 떨어뜨림 (모드는 대부분 안 뜨겠지만, 적어도 게임은 켜진다)
+                Log.w("PING_LAUNCHER",
+                    "⚠️ 모드팩 manifest 에서 loader 식별 실패 (raw=${packResult.loaderType}) — Vanilla 로 폴백")
+                val legacyArgs = mcResult.minecraftArguments
+                    ?.split(" ")?.filter { it.isNotBlank() } ?: emptyList()
+                InstanceMeta(
+                    id = instanceId,
+                    name = mod.name,
+                    type = InstanceType.MODPACK,
+                    mcVersion = mcVersion,
+                    mainClass = mcResult.mainClass,
+                    assetIndexId = mcResult.assetIndexId,
+                    iconEmoji = "📦",
+                    gameArgs = legacyArgs,
+                    sourceModId = mod.id,
+                )
+            }
+        }
+
+        // ── 5) 메타 저장 + 빈 폴더 보장 ─────────────────────────────
+        File(instanceDir, "mods").mkdirs()
+        File(instanceDir, "resourcepacks").mkdirs()
+        File(instanceDir, "shaderpacks").mkdirs()
+        InstanceManager.saveMeta(this, finalMeta)
+
+        _progress.value = DownloadProgress(phase = DownloadPhase.DONE)
+        _statusMessage.value = "✅ ${mod.name} 설치 완료"
+        Log.d("PING_LAUNCHER", "✅ 모드팩 인스턴스 생성 완료: $instanceId (${finalMeta.loaderType ?: "vanilla"})")
     }
 
     /** 텍스처팩/쉐이더팩 등 인스턴스 비종속 컨텐츠 설치 (글로벌 폴더에 저장) */
@@ -1000,19 +1250,114 @@ class ContentPackBrowserActivity : BaseActivity() {
     private fun refreshInstalledIds() {
         lifecycleScope.launch(Dispatchers.IO) {
             val instances = InstanceManager.listInstances(this@ContentPackBrowserActivity)
-            // modpackId는 modpack_NAME 패턴 - 현재는 mod ID와 직접 매핑 X
-            // 대신 인스턴스 이름과 검색 결과의 name을 매칭하는 단순 휴리스틱을 사용.
-            // 더 견고하게 하려면 InstanceMeta에 sourceModId 같은 필드를 추가하는 게 좋음.
-            val installedNames = instances.map { it.name }.toSet()
-            val ids = _contentPacks.value.filter { it.name in installedNames }.map { it.id }.toSet()
+
+            // 1) sourceModId 가 있는 인스턴스의 mod id 집합 (신규 설치는 모두 여기 들어옴)
+            val installedIdsExact = instances.mapNotNull { it.sourceModId }.toSet()
+
+            // 2) sourceModId 가 없는 옛 인스턴스를 위한 이름 폴백
+            val installedNames = instances.filter { it.sourceModId == null }.map { it.name }.toSet()
+
+            val ids = _contentPacks.value
+                .filter { it.id in installedIdsExact || it.name in installedNames }
+                .map { it.id }
+                .toSet()
+
             _installedIds.value = ids
         }
     }
 
     private fun launchMod(mod: CurseForgeMod) {
-        // 인스턴스 실행은 별도 LaunchActivity / Launcher 모듈로 위임.
-        Log.d("PING_LAUNCHER", "실행 요청: ${mod.name}")
-        // TODO: 실제 게임 런처 호출 (예: GameLauncher.launch(this, instanceId))
+        val instanceId = InstanceManager.modpackId(mod.name)
+        val instanceDir = InstanceManager.instanceDir(this, instanceId)
+        val meta = InstanceManager.loadMeta(instanceDir)
+        if (meta == null) {
+            Log.e("PING_LAUNCHER", "❌ 인스턴스 메타 없음: $instanceId — 모드팩을 다시 설치하세요")
+            _statusMessage.value = "❌ ${mod.name} 인스턴스가 없음 — 다시 설치하세요"
+            return
+        }
+
+        Log.d("PING_LAUNCHER",
+            "▶ 실행: id=$instanceId mc=${meta.mcVersion} loader=${meta.loaderType ?: "vanilla"} " +
+                    "mainClass=${meta.mainClass} extraJars=${meta.extraJars.size}")
+
+        // natives / lwjgl 준비는 IO 스레드에서 — 첫 실행이면 시간이 좀 걸린다
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val internalBase = applicationContext.filesDir
+                val nativesDir = File(internalBase, "natives")
+
+                // 1) APK 의 .so → filesDir/natives/ 로 복사 (MinecraftActivity 가 여기서 dlopen)
+                copyNativesFromApkLibDir(nativesDir)
+
+                // 2) LWJGL 이 native 추출하려는 폴더에 미리 .so 깔아두기 (mc 버전마다)
+                prePopulateLwjglExtractDir(nativesDir, meta.mcVersion)
+
+                withContext(Dispatchers.Main) {
+                    MinecraftActivity.start(
+                        this@ContentPackBrowserActivity,
+                        versionId   = meta.mcVersion,
+                        assetIndex  = meta.assetIndexId,
+                        extraJars   = meta.extraJars,
+                        mainClass   = meta.mainClass,
+                        instanceDir = instanceDir.absolutePath,
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e("PING_LAUNCHER", "▶ 실행 준비 실패: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    _statusMessage.value = "❌ 실행 실패: ${e.message}"
+                }
+            }
+        }
+    }
+
+    /**
+     * MainActivity 와 동일한 동작 — APK 의 native .so 들을 filesDir/natives/ 로 미러링.
+     * arm64-v8a 만 추출. nativeLibraryDir 에 없는 것들 (예: assets 안에 들어간 .so) 까지
+     * APK zip 직접 열어서 보강.
+     */
+    private fun copyNativesFromApkLibDir(nativesDir: File) {
+        if (nativesDir.exists()) nativesDir.deleteRecursively()
+        nativesDir.mkdirs()
+
+        val apkLibDir = File(applicationInfo.nativeLibraryDir)
+        apkLibDir.listFiles()?.forEach { soFile ->
+            soFile.copyTo(File(nativesDir, soFile.name), overwrite = true)
+            File(nativesDir, soFile.name).setExecutable(true, false)
+        }
+
+        val apkPath = applicationInfo.sourceDir
+        java.util.zip.ZipFile(apkPath).use { zip ->
+            zip.entries().asSequence()
+                .filter { it.name.startsWith("lib/arm64-v8a/") && it.name.endsWith(".so") }
+                .forEach { entry ->
+                    val fileName = entry.name.substringAfterLast("/")
+                    val dest = File(nativesDir, fileName)
+                    if (!dest.exists()) {
+                        zip.getInputStream(entry).use { input ->
+                            dest.outputStream().use { input.copyTo(it) }
+                        }
+                        dest.setExecutable(true, false)
+                        dest.setReadable(true, false)
+                    }
+                }
+        }
+    }
+
+    /**
+     * MainActivity 와 동일 — LWJGL 이 native 자동 추출하려는 후보 폴더들에 미리 .so 배치.
+     * 안드로이드는 jar 안 native 추출이 막혀있어서 안 하면 UnsatisfiedLinkError.
+     */
+    private fun prePopulateLwjglExtractDir(nativesDir: File, versionId: String) {
+        listOf("3.2.1", "3.2.2", "3.2.1-build-12", "3.2.2-build-12", "3.3.3", "3.3.3-snapshot").forEach { version ->
+            val lwjglDir = File(getExternalFilesDir(null), "mc_$versionId/.lwjgl/$version")
+            if (lwjglDir.exists()) lwjglDir.deleteRecursively()
+            lwjglDir.mkdirs()
+            nativesDir.listFiles()?.forEach { soFile ->
+                soFile.copyTo(File(lwjglDir, soFile.name), overwrite = true)
+                File(lwjglDir, soFile.name).setExecutable(true, false)
+            }
+        }
     }
 
     private fun beginInstall(mod: CurseForgeMod, message: String) {
