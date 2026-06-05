@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -30,6 +31,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import kr.co.donghyun.pinglauncher.data.curseforge.CurseForgeMod
 import kr.co.donghyun.pinglauncher.data.mojang.DownloadProgress
+import kr.co.donghyun.pinglauncher.data.renderer.RendererManager
 import kr.co.donghyun.pinglauncher.presentation.ContentPackDetailActivity
 import kr.co.donghyun.pinglauncher.presentation.ui.theme.*
 import kr.co.donghyun.pinglauncher.presentation.util.window.isTablet
@@ -102,19 +104,16 @@ fun ContentPackBrowserScreen(
     val TextMain = Color(0xFFFCE4EC)
     val TextSub = Color(0xFFBB86A0)
 
-    Column(modifier = Modifier.fillMaxSize().background(BgDark).systemBarsPadding()) {
-        // 상단 바 검색 영역
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(BgSurface)
-                .padding(vertical = if (tablet) 12.dp else 8.dp, horizontal = if (tablet) 16.dp else 12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
+    Column(modifier = Modifier.fillMaxSize().background(BgSurface).systemBarsPadding()) {
+        Column(modifier = Modifier.border(1.dp, BgBorder, RoundedCornerShape(0.dp)).padding(horizontal = 16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            Spacer(modifier = Modifier.height(12.dp))
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(BgSurface)
+                    .padding(horizontal = if (tablet) 16.dp else 10.dp, vertical = if (tablet) 10.dp else 6.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     "컨텐츠 검색",
@@ -122,21 +121,32 @@ fun ContentPackBrowserScreen(
                     fontSize = if (tablet) 16.sp else 12.sp,
                     fontWeight = FontWeight.Bold
                 )
-                BasicTextField(
-                    value = searchQuery,
-                    onValueChange = {
-                        searchQuery = it
-                        onSearch(it, selectedVersion, selectedContentType)
-                    },
-                    textStyle = TextStyle(color = TextMain, fontSize = if (tablet) 13.sp else 11.sp),
-                    cursorBrush = SolidColor(Pink),
-                    modifier = Modifier
-                        .weight(1f)
-                        .background(BgDark, RoundedCornerShape(20.dp))
-                        .border(1.dp, BgBorder, RoundedCornerShape(20.dp))
-                        .padding(horizontal = 16.dp, vertical = 14.dp)
-                )
             }
+            Spacer(modifier = Modifier.height(8.dp))
+            BasicTextField(
+                value = searchQuery,
+                onValueChange = {
+                    searchQuery = it
+                    onSearch(it, selectedVersion, selectedContentType)
+                },
+                textStyle = TextStyle(color = TextMain, fontSize = if (tablet) 13.sp else 11.sp),
+                cursorBrush = SolidColor(Pink),
+                modifier = Modifier
+                    .fillMaxWidth(1f)
+                    .background(BgDark, RoundedCornerShape(20.dp))
+                    .border(1.dp, BgBorder, RoundedCornerShape(20.dp))
+                    .padding(horizontal = 16.dp, vertical = 16.dp)
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(BgSurface)
+                .padding(vertical = if (tablet) 12.dp else 8.dp, horizontal = if (tablet) 16.dp else 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
 
             // 컨텐츠 타입 필터 칩 (Modpack / Mod / TexturePack / ShaderPack)
             LazyRow(
