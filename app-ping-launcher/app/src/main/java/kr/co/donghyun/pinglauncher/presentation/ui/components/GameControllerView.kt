@@ -279,7 +279,7 @@ class GameControllerView(context: Context) : View(context) {
             source.flags
         )
     }
-    
+
     /**
      * density 기반 통합 스케일링 + 겹침 시 프리셋 레이아웃으로 자동 정리.
      */
