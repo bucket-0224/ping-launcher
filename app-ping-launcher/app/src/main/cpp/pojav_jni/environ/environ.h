@@ -50,6 +50,7 @@ struct pojav_environ_s {
     jmethodID method_accessAndroidClipboard;
     jmethodID method_onGrabStateChanged;
     jmethodID method_onDirectInputEnable;
+    jmethodID method_onCursorShapeChanged;
     jmethodID method_glftSetWindowAttrib;
     jmethodID method_internalWindowSizeChanged;
     jmethodID method_internalChangeMonitorSize;

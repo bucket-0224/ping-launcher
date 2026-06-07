@@ -79,4 +79,13 @@ public class CallbackBridge {
     public static void onDirectInputEnable() {
         Log.d(TAG, "onDirectInputEnable (no-op)");
     }
+
+    /**
+     * 마인크래프트가 커서 모양 변경을 요청할 때 네이티브(nativeSetCursorShape)가 호출.
+     * ping-launcher는 별도 커서 UI가 없으므로 로그만 남기고 no-op.
+     */
+    @SuppressWarnings("unused")
+    public static void onCursorShapeChanged(int shape) {
+        Log.d(TAG, "onCursorShapeChanged: shape=" + shape);
+    }
 }

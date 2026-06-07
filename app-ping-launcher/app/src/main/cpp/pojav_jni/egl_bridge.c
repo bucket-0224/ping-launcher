@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <EGL/egl.h>
@@ -289,8 +290,29 @@ EXTERNAL_API void pojavSetWindowHint(int hint, int value) {
     }
 }
 
+/* FPS counter */
+static int frameCount = 0;
+static int fps = 0;
+static time_t lastTime = 0;
+
+static void calculateFPS() {
+    frameCount++;
+    time_t currentTime = time(NULL);
+    if (currentTime != lastTime) {
+        lastTime = currentTime;
+        fps = frameCount;
+        frameCount = 0;
+    }
+}
+
 EXTERNAL_API void pojavSwapBuffers() {
+    calculateFPS();
     br_swap_buffers();
+}
+
+EXTERNAL_API JNIEXPORT jint JNICALL
+Java_org_lwjgl_glfw_CallbackBridge_getCurrentFps(ABI_COMPAT JNIEnv *env, ABI_COMPAT jclass clazz) {
+    return fps;
 }
 
 
