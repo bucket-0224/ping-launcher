@@ -499,6 +499,37 @@ Java_kr_co_donghyun_pinglauncher_presentation_util_jni_JavaNativeLauncher_bootMi
         }
     }
 
+    // ── libopenal.so RTLD_GLOBAL 선행 로드 ─────────────────────
+    // LWJGL OpenAL은 ndlopen으로 libopenal.so를 로드한 뒤 dlsym(handle, 'alcGetProcAddress')
+    // 등으로 함수 포인터를 획득한다. 그런데 libopenal.so의 ALC 심볼들이 PROTECTED visibility로
+    // 빌드되어 있어 Android bionic linker에서 dlsym으로 조회가 불가능하다.
+    // ZalithLauncher2는 LWJGL 초기화 전에 ZLBridge.dlopen(RTLD_GLOBAL)으로 미리 로드해
+    // 이 문제를 우회한다. 우리도 동일하게 org.lwjgl.librarypath에서 경로를 파싱해 선행 로드.
+    {
+        const char* lwjgl_lib_path = nullptr;
+        const char* prefix = "-Dorg.lwjgl.librarypath=";
+        size_t prefix_len = strlen(prefix);
+        for (int i = 0; i < jvm_arg_count; i++) {
+            const char* opt = options[i].optionString;
+            if (strncmp(opt, prefix, prefix_len) == 0) {
+                lwjgl_lib_path = opt + prefix_len;
+                break;
+            }
+        }
+        if (lwjgl_lib_path) {
+            std::string openal_path = std::string(lwjgl_lib_path) + "/libopenal.so";
+            void* openal_handle = dlopen(openal_path.c_str(), RTLD_GLOBAL | RTLD_LAZY);
+            if (openal_handle) {
+                LOGI("\u2705 libopenal.so RTLD_GLOBAL preload 성공: %s", openal_path.c_str());
+            } else {
+                LOGE("\u26a0\ufe0f libopenal.so RTLD_GLOBAL preload 실패: %s → %s",
+                     openal_path.c_str(), dlerror());
+            }
+        } else {
+            LOGE("\u26a0\ufe0f org.lwjgl.librarypath JVM 인자를 찾지 못함 — libopenal.so 선행 로드 불가");
+        }
+    }
+
     // ── JVM 부팅 ────────────────────────────────────────────────
     JavaVM* customVM = nullptr;
     JNIEnv* customEnv = nullptr;
