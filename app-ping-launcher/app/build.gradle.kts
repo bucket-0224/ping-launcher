@@ -133,6 +133,7 @@ dependencies {
 
     // PojavLauncher patched LWJGL (컴파일 시점에만 클래스 참조용)
     compileOnly(files("src/main/assets/lwjgl3/lwjgl-glfw-classes.jar"))
+    compileOnly(files("src/main/assets/lwjgl3/modern/lwjgl-glfw-classes-modern.aar"))
 
     // ── bytehook (native_hooks/exit_hook.c, chmod_hook.c 가 dlopen 으로 사용) ──
     implementation(libs.bytehook)

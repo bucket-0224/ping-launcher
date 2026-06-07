@@ -1,6 +1,7 @@
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.rememberScrollState
@@ -19,6 +20,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import kr.co.donghyun.pinglauncher.presentation.ContentDetail
+import kr.co.donghyun.pinglauncher.presentation.ui.theme.TextPrimary
+import kr.co.donghyun.pinglauncher.presentation.ui.theme.TextSecondary
 import kr.co.donghyun.pinglauncher.presentation.util.window.isTablet
 
 /**
@@ -55,6 +58,9 @@ fun ContentPackDetailScreen(
     val BgBorder = Color(0xFF3D1A32)
     val TextMain = Color(0xFFFCE4EC)
     val TextSub = Color(0xFFBB86A0)
+
+    var showAlertDialog by remember { mutableStateOf(false) }
+    var doNotShowAgain by remember { mutableStateOf(false)}
 
     Column(
         modifier = Modifier
@@ -234,7 +240,13 @@ fun ContentPackDetailScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Button(
-                onClick = { if (isInstalled) onLaunch() else onInstall() },
+                onClick = {
+                    if(!showAlertDialog && !doNotShowAgain) {
+                        showAlertDialog = true
+                    } else {
+                        if (isInstalled) onLaunch() else onInstall()
+                    }
+                },
                 colors = ButtonDefaults.buttonColors(containerColor = Pink),
                 shape = RoundedCornerShape(10.dp),
                 modifier = Modifier
@@ -248,6 +260,74 @@ fun ContentPackDetailScreen(
                     fontWeight = FontWeight.Bold
                 )
             }
+        }
+
+        if (showAlertDialog) {
+            AlertDialog(
+                onDismissRequest = { showAlertDialog = false },
+                title = { Text("⚠️: 모드팩은 완전하지 않습니다.", color = TextPrimary) },
+                text = {
+                    Column {
+                        // 기존 안내 텍스트
+                        Text(
+                            text = """
+                        일부 모드팩들은 크래시가 발생하거나, 이에 따라 런처가 종료되는 경험을 겪을 수 있습니다.
+                        이는 모드팩들이 JAVA를 기반으로 만들어진 것이 많기 때문에 발생하는 문제로써 해당 문제는 직접적으로 해결할 수 없습니다.
+                        
+                        크래시에 대한 원인 규명을 제공하고, 일부 모드를 ON/OFF 하는 편의적 기능은 제공하지만, 이는 완전한 해결책이 될 수 없습니다.
+                        
+                        따라서 유저 간의 커뮤니티를 형성하여 직접 해결하는 것을 추천드리며, 개발자는 모드팩 설치로 인한 직/간접적인 이슈에 대해서 책임지지 않습니다.
+                    """.trimIndent(),
+                            color = TextSecondary,
+                            fontSize = 13.sp,
+                        )
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        // '다시 보지 않기' 체크박스 영역
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .offset(x = (-12).dp)
+                                // 텍스트 영역을 클릭해도 체크박스가 토글되도록 설정하여 UX 향상
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null, // 클릭 이펙트 제거 (원하면 삭제 가능)
+                                    onClick = { doNotShowAgain = !doNotShowAgain }
+                                )
+                        ) {
+                            Checkbox(
+                                checked = doNotShowAgain,
+                                onCheckedChange = { doNotShowAgain = it }
+                            )
+                            Text(
+                                text = "다시 보지 않기",
+                                color = TextSecondary,
+                                fontSize = 14.sp
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showAlertDialog = false
+
+                        // '이해했습니다'를 눌렀을 때 체크박스 상태에 따라 로직 처리
+                        if (doNotShowAgain) {
+                            doNotShowAgain = true
+                        }
+
+                        if (isInstalled) onLaunch() else onInstall()
+                    }) { Text("이해했습니다.", color = TextMain) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showAlertDialog = false }) {
+                        Text("취소", color = TextSecondary)
+                    }
+                },
+                containerColor = BgSurface,
+            )
         }
     }
 }
