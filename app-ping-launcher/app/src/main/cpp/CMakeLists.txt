@@ -75,6 +75,9 @@ target_link_libraries(glfw
         ${dl-lib}
         bytehook::bytehook
 )
+# pojav 함수(pojavSwapInterval 등)를 전역 심볼 테이블에 노출하여
+# GLFW$Functions.<clinit>의 dlsym 조회가 성공하도록 한다
+target_link_options(glfw PRIVATE -Wl,-z,global)
 
 # ── libpojavexec.so ──────────────────────────────────────────
 add_library(pojavexec SHARED ${POJAV_SOURCES})
@@ -88,6 +91,9 @@ target_link_libraries(pojavexec
         ${dl-lib}
         bytehook::bytehook
 )
+# pojav 함수(pojavSwapInterval 등)를 전역 심볼 테이블에 노출하여
+# GLFW$Functions.<clinit>의 dlsym 조회가 성공하도록 한다
+target_link_options(pojavexec PRIVATE -Wl,-z,global)
 
 # ── libawt_xawt.so ────────────────────────────────────────────
 # JRE 의 libfontmanager.so 가 SONAME 으로 libawt_xawt.so 를 찾고
