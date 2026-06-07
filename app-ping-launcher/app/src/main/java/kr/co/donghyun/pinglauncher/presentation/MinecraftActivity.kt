@@ -934,13 +934,26 @@ class MinecraftActivity : BaseActivity() {
      */
     private fun isRedundantLwjglJar(file: File): Boolean {
         val n = file.name
-        // patched fat jar (e.g. "lwjgl-glfw-classes-3.3.1.jar") 는 무조건 keep
+        // patched glfw-classes jar 는 무조건 keep
         if (n.startsWith("lwjgl-glfw-classes", ignoreCase = true)) return false
-        // 네이티브 jar 는 어차피 안드로이드에서 못 씀 → 빼는 게 안전
+        // 네이티브 jar 는 어차피 안드로이드에서 못 씀 → 제거
         if (n.contains("natives", ignoreCase = true) && n.startsWith("lwjgl", ignoreCase = true)) return true
-        // 그 외 lwjgl-3.3.1.jar, lwjgl-openal-*.jar, lwjgl-opengl-*.jar, lwjgl-stb-*.jar,
-        // lwjgl-tinyfd-*.jar, lwjgl-jemalloc-*.jar, lwjgl-freetype-*.jar … 전부 redundant
-        return n.startsWith("lwjgl-", ignoreCase = true) || n == "lwjgl.jar"
+        // lwjgl-glfw-classes-3.4.1.jar 는 slim jar 로 opengl/openal/stb 등을 포함하지 않는다.
+        // 따라서 vanilla lwjgl-opengl-*.jar, lwjgl-openal-*.jar, lwjgl-stb-*.jar 등은
+        // classpath 에 반드시 남겨야 한다. 구버전 fat jar(lwjgl-glfw-classes.jar) 사용 시에는
+        // 이 jar 들이 중복이었으나, 신버전에서는 필수이므로 제거하지 않는다.
+        //
+        // 제거 대상: lwjgl.jar (base jar), lwjgl-*.jar 중 glfw 관련만
+        //   - lwjgl-glfw-*.jar  (glfw-classes 가 아닌 것 — 예: lwjgl-glfw-3.4.1.jar)
+        //   - lwjgl.jar / lwjgl-3.*.jar (base runtime, glfw-classes 에 system 패키지 포함)
+        if (n == "lwjgl.jar") return true
+        // lwjgl-3.x.x.jar 형태의 base jar 제거 (lwjgl-3.4.1.jar 등)
+        if (n.matches(Regex("lwjgl-\\d+\\.\\d+.*\\.jar", RegexOption.IGNORE_CASE))) return true
+        // lwjgl-glfw-3.x.x.jar (glfw-classes 가 아닌 vanilla glfw jar) 제거
+        if (n.startsWith("lwjgl-glfw-", ignoreCase = true) &&
+            !n.startsWith("lwjgl-glfw-classes", ignoreCase = true)) return true
+        // 나머지 lwjgl-opengl-*.jar, lwjgl-openal-*.jar, lwjgl-stb-*.jar 등은 keep
+        return false
     }
 
     private fun startMinecraft() {
