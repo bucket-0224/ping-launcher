@@ -67,9 +67,24 @@ int glfwGetError(const char** description) {
     return 0; /* GLFW_NO_ERROR */
 }
 
+/* ── 에러 콜백 상태 저장 ──────────────────────────────────────
+ * GLX._initGlfw() 는 GLFWErrorScope 를 사용해 아래 패턴으로 동작한다:
+ *   1. prev = glfwSetErrorCallback(myCallback)  ← 새 콜백 등록, 이전 값 저장
+ *   2. glfwInit() 등 GLFW 호출
+ *   3. glfwSetErrorCallback(prev)               ← 이전 콜백 복원
+ *   4. GLFWErrorScope.close() 에서 현재 콜백 == myCallback 인지 검증
+ *      → 다르면 IllegalStateException: "GLFW error callback has unexpectedly changed"
+ *
+ * stub 이 항상 NULL 을 반환하면 prev=NULL 이 저장되고,
+ * close() 에서 현재 콜백(myCallback) != prev(NULL) 이 되어 크래시 발생.
+ * 따라서 이전 콜백 포인터를 static 변수에 저장하고 반환해야 한다.
+ */
+static GLFWerrorfun s_error_callback = NULL;
+
 GLFWerrorfun glfwSetErrorCallback(GLFWerrorfun cbfun) {
-    (void)cbfun;
-    return NULL;
+    GLFWerrorfun prev = s_error_callback;
+    s_error_callback = cbfun;
+    return prev;
 }
 
 /* ── 플랫폼 ────────────────────────────────────────────────── */
