@@ -286,6 +286,12 @@ class MinecraftActivity : BaseActivity() {
             return
         }
 
+        try {
+            JavaNativeLauncher.preloadOpenAL(nativesDir.absolutePath)
+        } catch (e: Throwable) {
+            Log.w("PING_LAUNCHER", "preloadOpenAL 실패 (무시 가능): ${e.message}")
+        }
+
         // ── 렌더러별 .so 먼저 로드 (preloadAwtStubs 이전에) ───────────────
         // preloadAwtStubs 같은 JNI 바인딩 함수에서 실패가 나더라도,
         // 핵심 .so 들은 이미 메모리에 올라와 있어야 JVM 부팅이 가능하다.
@@ -324,7 +330,8 @@ class MinecraftActivity : BaseActivity() {
         }
 
         // 공통 .so — 하나가 실패해도 다음 것은 계속 시도
-        loadSoSafely(File(nativesDir, "libopenal.so"), required = false)
+        // libopenal.so는 System.load()로 로드하면 PROTECTED ALC 심볼이 안 보임.
+        // pingjvm.cpp의 preloadOpenAL()이 RTLD_NOW|RTLD_GLOBAL로 미리 떠 줌.
         loadSoSafely(File(nativesDir, "libglfw.so"), required = true)
         loadSoSafely(File(nativesDir, "libpojavexec.so"), required = true)
         loadSoSafely(File(nativesDir, "liblwjgl.so"), required = false)

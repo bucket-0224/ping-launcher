@@ -518,7 +518,7 @@ Java_kr_co_donghyun_pinglauncher_presentation_util_jni_JavaNativeLauncher_bootMi
         }
         if (lwjgl_lib_path) {
             std::string openal_path = std::string(lwjgl_lib_path) + "/libopenal.so";
-            void* openal_handle = dlopen(openal_path.c_str(), RTLD_GLOBAL | RTLD_LAZY);
+            void* openal_handle = dlopen(openal_path.c_str(), RTLD_NOW | RTLD_GLOBAL);
             if (openal_handle) {
                 LOGI("\u2705 libopenal.so RTLD_GLOBAL preload 성공: %s", openal_path.c_str());
             } else {
@@ -714,4 +714,40 @@ Java_kr_co_donghyun_pinglauncher_presentation_MinecraftActivity_nativeDumpCharCa
     LOGI("DUMP: GLFW_invoke_Char   = %p", (void*)e->GLFW_invoke_Char);
     LOGI("DUMP: GLFW_invoke_Key    = %p", (void*)e->GLFW_invoke_Key);
     LOGI("DUMP: GLFW_invoke_MouseButton = %p", (void*)e->GLFW_invoke_MouseButton);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_kr_co_donghyun_pinglauncher_presentation_util_jni_JavaNativeLauncher_preloadOpenAL(
+        JNIEnv* env, jclass clazz, jstring nativeLibDir) {
+    const char* dir = env->GetStringUTFChars(nativeLibDir, nullptr);
+    std::string path = std::string(dir) + "/libopenal.so";
+    env->ReleaseStringUTFChars(nativeLibDir, dir);
+
+    // ★ 반드시 RTLD_NOW: PROTECTED ALC 심볼 전부 즉시 resolve
+    // ★ 반드시 RTLD_GLOBAL: LWJGL이 나중에 dlsym 할 때 보이게
+    void* h = dlopen(path.c_str(), RTLD_NOW | RTLD_GLOBAL);
+    if (h) {
+        LOGI("✅ libopenal.so EARLY RTLD_NOW|RTLD_GLOBAL: %s", path.c_str());
+
+        void* s_alcGetProcAddress  = dlsym(h, "alcGetProcAddress");
+        void* s_alGetProcAddress   = dlsym(h, "alGetProcAddress");
+        void* s_alGenSources       = dlsym(h, "alGenSources");
+        void* s_alBufferData       = dlsym(h, "alBufferData");
+        void* s_alSourcePlay       = dlsym(h, "alSourcePlay");
+        void* s_alcMakeCtxCurrent  = dlsym(h, "alcMakeContextCurrent");
+
+        LOGI("   alcGetProcAddress=%p  alGetProcAddress=%p", s_alcGetProcAddress, s_alGetProcAddress);
+        LOGI("   alGenSources=%p  alBufferData=%p  alSourcePlay=%p",
+             s_alGenSources, s_alBufferData, s_alSourcePlay);
+
+// 진짜로 alcGetProcAddress 가 작동하는지도 라이브 테스트
+        if (s_alcGetProcAddress && s_alcMakeCtxCurrent) {
+            typedef void* (*alcGPA_t)(void*, const char*);
+            alcGPA_t fn = (alcGPA_t) s_alcGetProcAddress;
+            void* alGenSrc_via_query = fn(nullptr, "alGenSources");
+            LOGI("   via alcGetProcAddress: alGenSources=%p", alGenSrc_via_query);
+        }
+    } else {
+        LOGE("❌ libopenal.so EARLY-LOAD 실패: %s", dlerror());
+    }
 }

@@ -6,6 +6,7 @@ class JavaNativeLauncher {
             System.loadLibrary("pingjvm")
         }
         @JvmStatic external fun preloadAwtStubs(nativeLibDir: String)
+        @JvmStatic external fun preloadOpenAL(nativeLibDir: String)
     }
 
     external fun bootMinecraftJVM(
