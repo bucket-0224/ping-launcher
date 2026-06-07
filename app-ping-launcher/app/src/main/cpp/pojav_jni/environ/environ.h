@@ -24,7 +24,9 @@ typedef void GLFW_invoke_Char_func(void* window, unsigned int codepoint);
 typedef void GLFW_invoke_CharMods_func(void* window, unsigned int codepoint, int mods);
 typedef void GLFW_invoke_CursorEnter_func(void* window, int entered);
 typedef void GLFW_invoke_CursorPos_func(void* window, double xpos, double ypos);
+typedef void GLFW_invoke_FramebufferSize_func(void* window, int width, int height);
 typedef void GLFW_invoke_Key_func(void* window, int key, int scancode, int action, int mods);
+typedef void GLFW_invoke_WindowSize_func(void* window, int width, int height);
 typedef void GLFW_invoke_MouseButton_func(void* window, int button, int action, int mods);
 typedef void GLFW_invoke_Scroll_func(void* window, double xoffset, double yoffset);
 
@@ -70,9 +72,11 @@ struct pojav_environ_s {
     ADD_CALLBACK_WWIN(CharMods);
     ADD_CALLBACK_WWIN(CursorEnter);
     ADD_CALLBACK_WWIN(CursorPos);
+    ADD_CALLBACK_WWIN(FramebufferSize);
     ADD_CALLBACK_WWIN(Key);
     ADD_CALLBACK_WWIN(MouseButton);
     ADD_CALLBACK_WWIN(Scroll);
+    ADD_CALLBACK_WWIN(WindowSize);
 
 #undef ADD_CALLBACK_WWIN
 };

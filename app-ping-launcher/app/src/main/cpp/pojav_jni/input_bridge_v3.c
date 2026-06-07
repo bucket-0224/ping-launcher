@@ -28,9 +28,11 @@
 #define EVENT_TYPE_CHAR 1000
 #define EVENT_TYPE_CHAR_MODS 1001
 #define EVENT_TYPE_CURSOR_ENTER 1002
+#define EVENT_TYPE_FRAMEBUFFER_SIZE 1004
 #define EVENT_TYPE_KEY 1005
 #define EVENT_TYPE_MOUSE_BUTTON 1006
 #define EVENT_TYPE_SCROLL 1007
+#define EVENT_TYPE_WINDOW_SIZE 1008
 
 #define TRY_ATTACH_ENV(env_name, vm, error_message, then) JNIEnv* env_name;\
 do {                                                                       \
@@ -122,12 +124,17 @@ ADD_CALLBACK_WWIN(Char)
 ADD_CALLBACK_WWIN(CharMods)
 ADD_CALLBACK_WWIN(CursorEnter)
 ADD_CALLBACK_WWIN(CursorPos)
+ADD_CALLBACK_WWIN(FramebufferSize)
 ADD_CALLBACK_WWIN(Key)
 ADD_CALLBACK_WWIN(MouseButton)
 ADD_CALLBACK_WWIN(Scroll)
-
+ADD_CALLBACK_WWIN(WindowSize)
 #undef ADD_CALLBACK_WWIN
 
+void handleFramebufferSizeJava(long window, int w, int h) {
+    (void)w; (void)h;
+    (*pojav_environ->glfwThreadVmEnv)->CallStaticVoidMethod(pojav_environ->glfwThreadVmEnv, pojav_environ->vmGlfwClass, pojav_environ->method_internalWindowSizeChanged, (jlong)window);
+}
 void updateMonitorSize(int width, int height) {
     (*pojav_environ->glfwThreadVmEnv)->CallStaticVoidMethod(pojav_environ->glfwThreadVmEnv, pojav_environ->vmGlfwClass, pojav_environ->method_internalChangeMonitorSize, width, height);
 }
@@ -164,6 +171,14 @@ void pojavPumpEvents(void* window) {
                 break;
             case EVENT_TYPE_SCROLL:
                 if(pojav_environ->GLFW_invoke_Scroll) pojav_environ->GLFW_invoke_Scroll(window, event.i1, event.i2);
+                break;
+            case EVENT_TYPE_FRAMEBUFFER_SIZE:
+                handleFramebufferSizeJava(pojav_environ->showingWindow, event.i1, event.i2);
+                if(pojav_environ->GLFW_invoke_FramebufferSize) pojav_environ->GLFW_invoke_FramebufferSize(window, event.i1, event.i2);
+                break;
+            case EVENT_TYPE_WINDOW_SIZE:
+                handleFramebufferSizeJava(pojav_environ->showingWindow, event.i1, event.i2);
+                if(pojav_environ->GLFW_invoke_WindowSize) pojav_environ->GLFW_invoke_WindowSize(window, event.i1, event.i2);
                 break;
         }
 
@@ -454,10 +469,21 @@ void critical_send_screen_size(jint width, jint height) {
     // So unmark the size as "consumed"
     pojav_environ->monitorSizeConsumed = false;
     pojav_environ->shouldUpdateMonitorSize = true;
-    // Don't use the direct updates  for screen dimensions.
-    // This is done to ensure that we have predictable conditions to correctly call
-    // updateMonitorSize() and updateWindowSize() while on the render thread with an attached
-    // JNIEnv.
+    // Dispatch FramebufferSize and WindowSize callbacks so Minecraft resizes the viewport
+    if (pojav_environ->GLFW_invoke_FramebufferSize) {
+        if (pojav_environ->isUseStackQueueCall) {
+            sendData(EVENT_TYPE_FRAMEBUFFER_SIZE, width, height, 0, 0);
+        } else {
+            pojav_environ->GLFW_invoke_FramebufferSize((void*) pojav_environ->showingWindow, width, height);
+        }
+    }
+    if (pojav_environ->GLFW_invoke_WindowSize) {
+        if (pojav_environ->isUseStackQueueCall) {
+            sendData(EVENT_TYPE_WINDOW_SIZE, width, height, 0, 0);
+        } else {
+            pojav_environ->GLFW_invoke_WindowSize((void*) pojav_environ->showingWindow, width, height);
+        }
+    }
 }
 
 void noncritical_send_screen_size(__attribute__((unused)) JNIEnv* env, __attribute__((unused)) jclass clazz, jint width, jint height) {
