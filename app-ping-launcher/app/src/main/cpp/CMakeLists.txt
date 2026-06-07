@@ -42,7 +42,6 @@ set(POJAV_SOURCES
         pojav_jni/native_hooks/chmod_hook.c
         pojav_jni/native_hooks/resolvconf_hook.c
         pojav_jni/jre_launcher.c
-        pojav_jni/glfw_stubs.c
 )
 
 set(POJAV_INCLUDES
