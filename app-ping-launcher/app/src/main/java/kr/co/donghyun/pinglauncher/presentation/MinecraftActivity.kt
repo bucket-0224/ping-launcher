@@ -475,81 +475,22 @@ class MinecraftActivity : BaseActivity() {
 
         for (jar in candidates) {
             val missing = findMissingMethods(jar, required)
-            val functionsHasClinit = checkGlfwFunctionsHasClinit(jar)
-            if (missing.isEmpty() && !functionsHasClinit) {
+            if (missing.isEmpty()) {
                 Log.d("PING_LAUNCHER", "✅ GLFW 3.4 stubs 이미 있음: ${jar.name}")
-                // 옛 마커 파일 청소 (있을 수도 없을 수도)
                 File(jar.parent, "${jar.name}.patched_glfw34").delete()
                 continue
             }
-            if (missing.isNotEmpty()) {
-                Log.w("PING_LAUNCHER", "🩹 GLFW 패치 필요: ${jar.name} — 누락 메서드 $missing")
-            }
-            if (functionsHasClinit) {
-                Log.w("PING_LAUNCHER", "🩹 GLFW\$Functions.<clinit> 제거 필요: ${jar.name}")
-            }
+            Log.w("PING_LAUNCHER", "🩹 GLFW 패치 필요: ${jar.name} — 누락 메서드 $missing")
             try {
                 patchGlfwJar(jar)
                 Log.d("PING_LAUNCHER", "✅ 패치 완료: ${jar.name}")
-                // 검증
                 val stillMissing = findMissingMethods(jar, required)
                 if (stillMissing.isNotEmpty()) {
                     Log.e("PING_LAUNCHER", "❌ 패치 후에도 여전히 누락: $stillMissing — patcher 버그 의심")
                 }
-                if (checkGlfwFunctionsHasClinit(jar)) {
-                    Log.e("PING_LAUNCHER", "❌ 패치 후에도 GLFW\$Functions.<clinit> 잔존 — patcher 버그 의심")
-                }
             } catch (e: Exception) {
                 Log.e("PING_LAUNCHER", "❌ GLFW 패치 실패: ${e.message}", e)
             }
-        }
-    }
-
-    /**
-     * jar 안의 org/lwjgl/glfw/GLFW\$Functions.class 에 <clinit>(정적 초기화 블록)이
-     * 실질적인 코드를 포함하고 있는지 검사한다.
-     *
-     * GLFW\$Functions.<clinit> 은 libglfw.so 에서 함수 포인터를 조회하는데,
-     * 이 조회가 실패하면 ExceptionInInitializerError → NoClassDefFoundError 로
-     * 게임이 크래시된다. 따라서 <clinit> 이 존재하면 반드시 패치(빈 메서드로 교체)해야 한다.
-     *
-     * @return true  → <clinit> 이 존재하며 비어 있지 않음 (패치 필요)
-     *         false → <clinit> 이 없거나 이미 빈 메서드 (패치 불필요)
-     */
-    private fun checkGlfwFunctionsHasClinit(jar: File): Boolean {
-        return try {
-            ZipFile(jar).use { zip ->
-                val entry = zip.getEntry("org/lwjgl/glfw/GLFW\$Functions.class")
-                    ?: return false
-                val bytes = zip.getInputStream(entry).readBytes()
-                var hasClinit = false
-                ClassReader(bytes).accept(object : ClassVisitor(Opcodes.ASM9) {
-                    override fun visitMethod(
-                        access: Int, name: String, descriptor: String,
-                        signature: String?, exceptions: Array<out String>?
-                    ): org.objectweb.asm.MethodVisitor? {
-                        if (name != "<clinit>") return null
-                        // <clinit> 이 RETURN 단 한 개만 있으면 이미 빈 메서드 → 패치 불필요
-                        return object : org.objectweb.asm.MethodVisitor(Opcodes.ASM9) {
-                            private var instructionCount = 0
-                            override fun visitInsn(opcode: Int)          { instructionCount++ }
-                            override fun visitMethodInsn(o: Int, owner: String, n: String, d: String, iface: Boolean) { instructionCount++ }
-                            override fun visitFieldInsn(o: Int, owner: String, n: String, d: String) { instructionCount++ }
-                            override fun visitLdcInsn(cst: Any?)         { instructionCount++ }
-                            override fun visitVarInsn(o: Int, v: Int)    { instructionCount++ }
-                            override fun visitEnd() {
-                                // RETURN(1개)만 있으면 이미 빈 메서드, 그 이상이면 실질 코드 존재
-                                if (instructionCount > 1) hasClinit = true
-                            }
-                        }
-                    }
-                }, 0)
-                hasClinit
-            }
-        } catch (e: Exception) {
-            Log.w("PING_LAUNCHER", "GLFW\$Functions 스캔 실패 (${jar.name}): ${e.message}")
-            // 스캔 실패 시 안전하게 패치 필요로 간주
-            true
         }
     }
 
@@ -581,47 +522,6 @@ class MinecraftActivity : BaseActivity() {
         }
     }
 
-    private fun patchGlfwFunctionsClass(bytes: ByteArray): ByteArray {
-        val ASM = Opcodes.ASM9
-        val reader = ClassReader(bytes)
-        val writer = ClassWriter(reader, ClassWriter.COMPUTE_FRAMES)
-
-        val visitor = object : ClassVisitor(ASM, writer) {
-            override fun visitMethod(
-                access: Int, name: String, descriptor: String,
-                signature: String?, exceptions: Array<out String>?
-            ): org.objectweb.asm.MethodVisitor? {
-                val mv = super.visitMethod(access, name, descriptor, signature, exceptions)
-                // ★ <clinit>을 빈 메서드로 교체
-                if (name == "<clinit>") {
-                    Log.d("PING_LAUNCHER", "  🔧 GLFW\$Functions.<clinit> 제거")
-                    return object : org.objectweb.asm.MethodVisitor(ASM, mv) {
-                        override fun visitCode() {
-                            super.visitCode()
-                            // 기존 코드 무시하고 즉시 return
-                            mv.visitInsn(Opcodes.RETURN)
-                        }
-                        // 기존 바이트코드 명령어를 모두 무시
-                        override fun visitInsn(opcode: Int) {
-                            if (opcode == Opcodes.RETURN) super.visitInsn(opcode)
-                        }
-                        override fun visitMethodInsn(o: Int, owner: String, name: String, desc: String, iface: Boolean) {}
-                        override fun visitFieldInsn(o: Int, owner: String, name: String, desc: String) {}
-                        override fun visitLdcInsn(cst: Any?) {}
-                        override fun visitVarInsn(o: Int, v: Int) {}
-                        override fun visitMaxs(maxStack: Int, maxLocals: Int) {
-                            super.visitMaxs(0, 0)
-                        }
-                    }
-                }
-                return mv
-            }
-        }
-        reader.accept(visitor, 0)
-        return writer.toByteArray()
-    }
-
-
     private fun patchGlfwJar(jar: File) {
         val tmp = File(jar.parent, jar.name + ".tmp")
         ZipFile(jar).use { zin ->
@@ -633,9 +533,6 @@ class MinecraftActivity : BaseActivity() {
                     val finalBytes = when (entry.name) {
                         "org/lwjgl/glfw/GLFW.class" ->
                             patchGlfwClass(bytes)
-                        // ★ 추가: GLFW$Functions.<clinit>도 빈 메서드로 교체
-                        "org/lwjgl/glfw/GLFW\$Functions.class" ->
-                            patchGlfwFunctionsClass(bytes)
                         else -> bytes
                     }
                     val newEntry = ZipEntry(entry.name).apply { method = ZipEntry.DEFLATED }
