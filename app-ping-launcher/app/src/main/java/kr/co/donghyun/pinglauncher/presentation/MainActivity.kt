@@ -184,7 +184,7 @@ class MainActivity : BaseActivity() {
 
 
     private fun prePopulateLwjglExtractDir(baseDir: File, nativesDir: File, versionId: String) {
-        listOf("3.2.1", "3.2.2", "3.2.1-build-12", "3.2.2-build-12", "3.3.3", "3.3.3-snapshot").forEach { version ->
+        listOf("3.2.1", "3.2.2", "3.2.1-build-12", "3.2.2-build-12", "3.3.3", "3.3.3-snapshot", "3.4.1").forEach { version ->
             val lwjglDir = File(getExternalFilesDir(null), "mc_$versionId/.lwjgl/$version")
             if (lwjglDir.exists()) lwjglDir.deleteRecursively()
             lwjglDir.mkdirs()

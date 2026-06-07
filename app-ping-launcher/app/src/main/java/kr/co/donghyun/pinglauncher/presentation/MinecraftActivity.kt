@@ -329,6 +329,10 @@ class MinecraftActivity : BaseActivity() {
         loadSoSafely(File(nativesDir, "libpojavexec.so"), required = true)
         loadSoSafely(File(nativesDir, "liblwjgl.so"), required = false)
         loadSoSafely(File(nativesDir, "liblwjgl_opengl.so"), required = false)
+        loadSoSafely(File(nativesDir, "liblwjgl_stb.so"), required = false)      // ★ 추가
+        loadSoSafely(File(nativesDir, "liblwjgl_nanovg.so"), required = false)   // ★ 추가
+        loadSoSafely(File(nativesDir, "liblwjgl_tinyfd.so"), required = false)   // ★ 추가
+        loadSoSafely(File(nativesDir, "libfreetype.so"), required = false)        // ★ 추가
 
         DnsHookNative.setup(this)
 
@@ -520,6 +524,47 @@ class MinecraftActivity : BaseActivity() {
         }
     }
 
+    private fun patchGlfwFunctionsClass(bytes: ByteArray): ByteArray {
+        val ASM = Opcodes.ASM9
+        val reader = ClassReader(bytes)
+        val writer = ClassWriter(reader, ClassWriter.COMPUTE_FRAMES)
+
+        val visitor = object : ClassVisitor(ASM, writer) {
+            override fun visitMethod(
+                access: Int, name: String, descriptor: String,
+                signature: String?, exceptions: Array<out String>?
+            ): org.objectweb.asm.MethodVisitor? {
+                val mv = super.visitMethod(access, name, descriptor, signature, exceptions)
+                // ★ <clinit>을 빈 메서드로 교체
+                if (name == "<clinit>") {
+                    Log.d("PING_LAUNCHER", "  🔧 GLFW\$Functions.<clinit> 제거")
+                    return object : org.objectweb.asm.MethodVisitor(ASM, mv) {
+                        override fun visitCode() {
+                            super.visitCode()
+                            // 기존 코드 무시하고 즉시 return
+                            mv.visitInsn(Opcodes.RETURN)
+                        }
+                        // 기존 바이트코드 명령어를 모두 무시
+                        override fun visitInsn(opcode: Int) {
+                            if (opcode == Opcodes.RETURN) super.visitInsn(opcode)
+                        }
+                        override fun visitMethodInsn(o: Int, owner: String, name: String, desc: String, iface: Boolean) {}
+                        override fun visitFieldInsn(o: Int, owner: String, name: String, desc: String) {}
+                        override fun visitLdcInsn(cst: Any?) {}
+                        override fun visitVarInsn(o: Int, v: Int) {}
+                        override fun visitMaxs(maxStack: Int, maxLocals: Int) {
+                            super.visitMaxs(0, 0)
+                        }
+                    }
+                }
+                return mv
+            }
+        }
+        reader.accept(visitor, 0)
+        return writer.toByteArray()
+    }
+
+
     private fun patchGlfwJar(jar: File) {
         val tmp = File(jar.parent, jar.name + ".tmp")
         ZipFile(jar).use { zin ->
@@ -528,14 +573,15 @@ class MinecraftActivity : BaseActivity() {
                 while (entries.hasMoreElements()) {
                     val entry = entries.nextElement()
                     val bytes = zin.getInputStream(entry).readBytes()
-                    val finalBytes = if (entry.name == "org/lwjgl/glfw/GLFW.class") {
-                        patchGlfwClass(bytes)
-                    } else bytes
-
-                    // 새 ZipEntry 로 만들어야 CRC/size 자동 계산. DEFLATED 로 통일.
-                    val newEntry = ZipEntry(entry.name).apply {
-                        method = ZipEntry.DEFLATED
+                    val finalBytes = when (entry.name) {
+                        "org/lwjgl/glfw/GLFW.class" ->
+                            patchGlfwClass(bytes)
+                        // ★ 추가: GLFW$Functions.<clinit>도 빈 메서드로 교체
+                        "org/lwjgl/glfw/GLFW\$Functions.class" ->
+                            patchGlfwFunctionsClass(bytes)
+                        else -> bytes
                     }
+                    val newEntry = ZipEntry(entry.name).apply { method = ZipEntry.DEFLATED }
                     zout.putNextEntry(newEntry)
                     zout.write(finalBytes)
                     zout.closeEntry()
@@ -546,10 +592,9 @@ class MinecraftActivity : BaseActivity() {
         if (!tmp.renameTo(jar)) throw IOException("임시 jar rename 실패")
     }
 
+
     private fun patchGlfwClass(bytes: ByteArray): ByteArray {
         val ASM = Opcodes.ASM9
-
-        // 이미 같은 시그니처 메서드가 있으면 덮어쓰지 않도록 1차 스캔
         val existing = HashSet<String>()
         ClassReader(bytes).accept(object : ClassVisitor(ASM) {
             override fun visitMethod(
@@ -563,15 +608,35 @@ class MinecraftActivity : BaseActivity() {
 
         val reader = ClassReader(bytes)
         val writer = ClassWriter(reader, ClassWriter.COMPUTE_FRAMES)
-
         val visitor = object : ClassVisitor(ASM, writer) {
+
+            // ★ 추가: <clinit> static 초기화 블록을 빈 블록으로 교체
+            override fun visitMethod(
+                access: Int, name: String, descriptor: String,
+                signature: String?, exceptions: Array<out String>?
+            ): org.objectweb.asm.MethodVisitor? {
+                if (name == "<clinit>") {
+                    Log.d("PING_LAUNCHER", "  🗑 <clinit> 제거 (static 초기화 블록)")
+                    // 빈 <clinit>으로 교체 (return만 있는 블록)
+                    val mv = super.visitMethod(access, name, descriptor, signature, exceptions)
+                    mv?.visitCode()
+                    mv?.visitInsn(Opcodes.RETURN)
+                    mv?.visitMaxs(0, 0)
+                    mv?.visitEnd()
+                    return null  // 원본 바이트코드는 무시
+                }
+                return super.visitMethod(access, name, descriptor, signature, exceptions)
+            }
+
             override fun visitEnd() {
-                // GLFW_PLATFORM_X11 = 0x60004
+                // 기존 GLFW 3.4 API 스텁 추가 로직 그대로 유지
                 if ("glfwPlatformSupported(I)Z" !in existing) {
-                    emitPlatformSupported(); Log.d("PING_LAUNCHER", "  + glfwPlatformSupported(I)Z")
+                    emitPlatformSupported()
+                    Log.d("PING_LAUNCHER", "  + glfwPlatformSupported(I)Z")
                 }
                 if ("glfwGetPlatform()I" !in existing) {
-                    emitGetPlatform(); Log.d("PING_LAUNCHER", "  + glfwGetPlatform()I")
+                    emitGetPlatform()
+                    Log.d("PING_LAUNCHER", "  + glfwGetPlatform()I")
                 }
                 listOf(
                     "glfwFocusWindow", "glfwHideWindow",
@@ -579,7 +644,8 @@ class MinecraftActivity : BaseActivity() {
                     "glfwRequestWindowAttention"
                 ).forEach { n ->
                     if ("$n(J)V" !in existing) {
-                        emitNoopJV(n); Log.d("PING_LAUNCHER", "  + $n(J)V")
+                        emitNoopJV(n)
+                        Log.d("PING_LAUNCHER", "  + $n(J)V")
                     }
                 }
                 super.visitEnd()
@@ -1068,6 +1134,11 @@ class MinecraftActivity : BaseActivity() {
                     }
                     if (ga != null) seenGA.add(ga)
                     jarList.add(f.absolutePath)
+
+                    if (isRedundantLwjglJar(f)) {
+                        Log.d("PING_LAUNCHER", "🚫 vanilla lwjgl jar 제외 (legacyDir): ${f.name}")
+                        return@forEach
+                    }
                 }
             }
         }
@@ -1677,22 +1748,41 @@ class MinecraftActivity : BaseActivity() {
 
     private fun copyLwjglJars(base: File) {
         val targetDir = File(base, "lwjgl3").apply { mkdirs() }
+
         try {
             val jarNames = assets.list("lwjgl3") ?: return
             for (jarName in jarNames) {
                 if (!jarName.endsWith(".jar")) continue
+
+                // 3.3.x jar 캐시 삭제 (3.4.1로 통일)
+                if (jarName == "lwjgl-glfw-classes.jar") {
+                    File(targetDir, jarName).delete()
+                    continue
+                }
+
                 val target = File(targetDir, jarName)
-                if (target.exists() && target.length() > 0) continue
+
+                // ★ openFd 대신 open으로 크기 확인
+                val assetSize = assets.open("lwjgl3/$jarName").use { it.available().toLong() }
+
+                if (target.exists() && target.length() == assetSize) {
+                    continue  // 동일한 파일이면 스킵
+                }
+
+                if (target.exists()) {
+                    Log.w("PING_LAUNCHER", "🔄 jar 교체 (크기 불일치): $jarName " +
+                            "(캐시=${target.length()}, assets=${assetSize})")
+                }
+
                 assets.open("lwjgl3/$jarName").use { input ->
                     target.outputStream().use { output -> input.copyTo(output) }
                 }
-                Log.d("PING_LAUNCHER", "📦 LWJGL jar 추출: $jarName (${target.length()} bytes)")
+                Log.d("PING_LAUNCHER", "📦 LWJGL jar 추출: $jarName")
             }
         } catch (e: Exception) {
             Log.e("PING_LAUNCHER", "LWJGL jar 추출 실패", e)
         }
     }
-
 
     override fun onResume() {
         super.onResume()

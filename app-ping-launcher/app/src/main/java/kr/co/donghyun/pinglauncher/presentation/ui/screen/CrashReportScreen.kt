@@ -69,12 +69,9 @@ fun CrashReportScreen(
                         horizontal = if (tablet) 16.dp else 10.dp,
                         vertical = if (tablet) 12.dp else 8.dp
                     ),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                TextButton(onClick = onBack) {
-                    Text("뒤로", color = TextSub, fontSize = if (tablet) 16.sp else 13.sp)
-                }
                 Text(
                     text = "크래시 복구 센터",
                     color = TextMain,

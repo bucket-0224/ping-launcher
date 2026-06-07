@@ -48,9 +48,13 @@ class PrepareNatives {
             }
         }
 
-        fun prePopulateLwjgl(versionId: String, applicationContext : Context) {
+        fun prePopulateLwjgl(versionId: String, applicationContext: Context) {
             val nativesDir = File(applicationContext.filesDir, "natives")
-            listOf("3.2.1", "3.2.2", "3.2.1-build-12", "3.2.2-build-12", "3.3.3", "3.3.3-snapshot").forEach { version ->
+            listOf(
+                "3.2.1", "3.2.2", "3.2.1-build-12", "3.2.2-build-12",
+                "3.3.3", "3.3.3-snapshot",
+                "3.4.1"   // ★ 추가
+            ).forEach { version ->
                 val lwjglDir = File(applicationContext.getExternalFilesDir(null), "mc_$versionId/.lwjgl/$version")
                 if (lwjglDir.exists()) lwjglDir.deleteRecursively()
                 lwjglDir.mkdirs()
@@ -60,5 +64,6 @@ class PrepareNatives {
                 }
             }
         }
+
     }
 }
