@@ -186,12 +186,18 @@ void pojavPumpEvents(void* window) {
                 if(pojav_environ->GLFW_invoke_Scroll) pojav_environ->GLFW_invoke_Scroll(window, event.i1, event.i2);
                 break;
             case EVENT_TYPE_FRAMEBUFFER_SIZE:
+                LOGI("🎯 DISPATCH FramebufferSize: window=%p w=%d h=%d cb=%p",   // ★ 추가
+                     window, event.i1, event.i2, pojav_environ->GLFW_invoke_FramebufferSize);
                 handleFramebufferSizeJava(pojav_environ->showingWindow, event.i1, event.i2);
-                if(pojav_environ->GLFW_invoke_FramebufferSize) pojav_environ->GLFW_invoke_FramebufferSize(window, event.i1, event.i2);
+                if(pojav_environ->GLFW_invoke_FramebufferSize)
+                    pojav_environ->GLFW_invoke_FramebufferSize(window, event.i1, event.i2);
                 break;
             case EVENT_TYPE_WINDOW_SIZE:
+                LOGI("🎯 DISPATCH WindowSize: window=%p w=%d h=%d cb=%p",        // ★ 추가
+                     window, event.i1, event.i2, pojav_environ->GLFW_invoke_WindowSize);
                 handleFramebufferSizeJava(pojav_environ->showingWindow, event.i1, event.i2);
-                if(pojav_environ->GLFW_invoke_WindowSize) pojav_environ->GLFW_invoke_WindowSize(window, event.i1, event.i2);
+                if(pojav_environ->GLFW_invoke_WindowSize)
+                    pojav_environ->GLFW_invoke_WindowSize(window, event.i1, event.i2);
                 break;
         }
 
@@ -511,6 +517,8 @@ void critical_send_mouse_button(jint button, jint action, jint mods) {
     }
 }
 
+
+
 void noncritical_send_mouse_button(__attribute__((unused)) JNIEnv* env, __attribute__((unused)) jclass clazz, jint button, jint action, jint mods) {
     critical_send_mouse_button(button, action, mods);
 }
@@ -518,25 +526,40 @@ void noncritical_send_mouse_button(__attribute__((unused)) JNIEnv* env, __attrib
 void critical_send_screen_size(jint width, jint height) {
     pojav_environ->savedWidth = width;
     pojav_environ->savedHeight = height;
-    // Even if there was call to pojavStartPumping that consumed the size, this call
-    // might happen right after it (or right before pojavStopPumping)
-    // So unmark the size as "consumed"
     pojav_environ->monitorSizeConsumed = false;
     pojav_environ->shouldUpdateMonitorSize = true;
-    // Dispatch FramebufferSize and WindowSize callbacks so Minecraft resizes the viewport
+
+    // ★ 진단 로그 추가
+    LOGI("📐 critical_send_screen_size(%d,%d) "
+         "FBcb=%p WinCb=%p stackQ=%d showingWindow=0x%lx",
+         width, height,
+         pojav_environ->GLFW_invoke_FramebufferSize,
+         pojav_environ->GLFW_invoke_WindowSize,
+         pojav_environ->isUseStackQueueCall,
+         (unsigned long)pojav_environ->showingWindow);
+
     if (pojav_environ->GLFW_invoke_FramebufferSize) {
         if (pojav_environ->isUseStackQueueCall) {
+            LOGI("  → FB queued via stack");
             sendData(EVENT_TYPE_FRAMEBUFFER_SIZE, width, height, 0, 0);
         } else {
-            pojav_environ->GLFW_invoke_FramebufferSize((void*) pojav_environ->showingWindow, width, height);
+            LOGI("  → FB dispatched directly");
+            pojav_environ->GLFW_invoke_FramebufferSize((void*)pojav_environ->showingWindow, width, height);
         }
+    } else {
+        LOGE("  ⚠️ FB callback NULL — skipping (이게 원인일 가능성 99%%)");
     }
+
     if (pojav_environ->GLFW_invoke_WindowSize) {
         if (pojav_environ->isUseStackQueueCall) {
+            LOGI("  → Win queued via stack");
             sendData(EVENT_TYPE_WINDOW_SIZE, width, height, 0, 0);
         } else {
-            pojav_environ->GLFW_invoke_WindowSize((void*) pojav_environ->showingWindow, width, height);
+            LOGI("  → Win dispatched directly");
+            pojav_environ->GLFW_invoke_WindowSize((void*)pojav_environ->showingWindow, width, height);
         }
+    } else {
+        LOGE("  ⚠️ Win callback NULL — skipping");
     }
 }
 

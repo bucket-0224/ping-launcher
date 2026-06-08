@@ -9,15 +9,17 @@
 
 #include <unistd.h>
 #include <pthread.h>
-#include <stdio.h>
+#include <bytehook.h>
 
 #include "environ/environ.h"  // 기존 include 옆에
+#include "native_hooks/native_hooks.h"
 
 
 #ifndef JNI_VERSION_1_8
 #define JNI_VERSION_1_8 0x00010008
 #endif
 
+#define EXITHOOK_TAG "PING_EXIT_HOOK"
 #define LOG_TAG "PingLauncherJVM"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
@@ -99,6 +101,53 @@ Java_kr_co_donghyun_pinglauncher_presentation_MinecraftActivity_nativeSetGuiScal
         JNIEnv* env, jobject thiz, jint scale) {
     g_guiScale = scale;
     LOGI("GUI Scale 설정: %d", scale);
+}
+
+extern "C" void hooked_exit(int code) {
+    __android_log_print(ANDROID_LOG_ERROR, EXITHOOK_TAG,
+                        "🔥🔥🔥 INTERCEPTED exit(%d) — bypassing atexit, calling _exit 🔥🔥🔥",
+                        code);
+    // logcat 버퍼 flush 기회 주기 (없으면 로그 유실)
+    fflush(stdout);
+    fflush(stderr);
+    _exit(code);
+}
+
+
+static bool g_exit_hook_installed = false;
+
+void installExitHook() {
+    if (g_exit_hook_installed) {
+        __android_log_print(ANDROID_LOG_INFO, EXITHOOK_TAG, "이미 설치됨, 스킵");
+        return;
+    }
+
+    int r = bytehook_init(BYTEHOOK_MODE_AUTOMATIC, false);
+    if (r != 0) {
+        __android_log_print(ANDROID_LOG_ERROR, EXITHOOK_TAG,
+                            "❌ bytehook_init 실패: %d", r);
+        return;
+    }
+    __android_log_print(ANDROID_LOG_INFO, EXITHOOK_TAG, "✅ bytehook 초기화 완료");
+
+    // libjvm.so, libjli.so, libc.so 모두에서 exit() 가로채기
+    const char* targets[] = {
+            "libjvm.so",
+            "libjli.so",
+            "libjava.so",
+            nullptr
+    };
+    for (int i = 0; targets[i]; i++) {
+        bytehook_stub_t stub = bytehook_hook_single(
+                targets[i], nullptr, "exit",
+                (void*)hooked_exit, nullptr, nullptr);
+        __android_log_print(ANDROID_LOG_INFO, EXITHOOK_TAG,
+                            "%s hook → stub=%p", targets[i], stub);
+    }
+
+    g_exit_hook_installed = true;
+    __android_log_print(ANDROID_LOG_INFO, EXITHOOK_TAG,
+                        "✅ Exit hook 설치 완료");
 }
 
 extern "C" JNIEXPORT jint JNICALL
@@ -403,6 +452,8 @@ Java_kr_co_donghyun_pinglauncher_presentation_util_jni_JavaNativeLauncher_bootMi
         return -1;
     }
 
+    installExitHook();
+
     // 경로 파싱: .../jre8_runtime/lib/aarch64/server/libjvm.so
     //  → server_lib_dir = .../jre8_runtime/lib/aarch64/server
     //  → java_lib_dir   = .../jre8_runtime/lib/aarch64
@@ -653,8 +704,12 @@ Java_kr_co_donghyun_pinglauncher_presentation_util_jni_JavaNativeLauncher_bootMi
         customEnv->ExceptionClear();
         printJavaException(customEnv, ex, 0);
         customEnv->DeleteLocalRef(ex);
-        return -6;
+        LOGI("=== Exception → forcing _exit(6) ===");
+        _exit(6);   // ★ return -6 대신
     }
+
+    LOGI("=== Main returned cleanly → forcing _exit(0) ===");
+    _exit(0);   // ★ return 0 대신
 
     return 0;
 }

@@ -1474,13 +1474,18 @@ class MinecraftActivity : BaseActivity() {
                             try {
                                 val cb = Class.forName("org.lwjgl.glfw.CallbackBridge")
                                 cb.getMethod("nativeSetInputReady", Boolean::class.java).invoke(null, true)
-                                // ★ 추가: 마우스/커서 콜백을 MC 메인 스레드에서 처리하도록 큐 모드 강제
-                                //   stackQ=0 이면 Android UI 스레드에서 직접 GLFW_invoke_MouseButton 을 동기 호출하는데,
-                                //   MC 1.13+ 는 입력을 자기 메인 스레드 polling 으로만 받아서 silently 무시함.
-                                //   stackQ=1 이면 이벤트가 큐에 쌓이고 pojavPumpEvents() 시점에 MC 메인 스레드에서 dispatch.
                                 cb.getMethod("nativeSetUseInputStackQueue", Boolean::class.java).invoke(null, true)
+
+                                // ★ 추가: callback 등록 후에 다시 한번 framebuffer size 전송
+                                currentSurface?.let { surface ->
+                                    val w = window.decorView.width
+                                    val h = window.decorView.height
+                                    cb.getMethod("nativeSendScreenSize", Int::class.java, Int::class.java)
+                                        .invoke(null, w, h)
+                                    Log.d("PING_LAUNCHER", "🖥 nativeSendScreenSize 재전송: ${w}x${h}")
+                                }
+
                                 inputReadySet = true
-                                Log.d("PING_LAUNCHER", "✅ InputReady=true, stackQueue=true 설정")
                             } catch (e: Throwable) {
                                 Log.w("PING_LAUNCHER", "Input 초기화 실패: ${e.message}")
                             }

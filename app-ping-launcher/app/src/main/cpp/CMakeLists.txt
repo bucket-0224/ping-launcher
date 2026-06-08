@@ -17,7 +17,9 @@ target_include_directories(pingjvm PRIVATE
         pojav_jni
         pojav_jni/environ
 )
-target_link_libraries(pingjvm ${log-lib})
+target_link_libraries(pingjvm PRIVATE bytehook::bytehook ${log-lib})
+
+find_package(bytehook REQUIRED CONFIG)
 
 # ── PojavLauncher core 소스 (awt_bridge.c 제외) ───────────────
 set(POJAV_SOURCES
