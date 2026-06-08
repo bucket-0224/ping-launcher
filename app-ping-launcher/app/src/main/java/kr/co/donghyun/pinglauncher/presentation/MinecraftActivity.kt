@@ -923,12 +923,16 @@ class MinecraftActivity : BaseActivity() {
      */
     private fun isRedundantLwjglJar(file: File): Boolean {
         val n = file.name
-        // patched fat jar (e.g. "lwjgl-glfw-classes-3.3.1.jar") 는 무조건 keep
+        // patched fat jar 본체 — 무조건 keep
         if (n.startsWith("lwjgl-glfw-classes", ignoreCase = true)) return false
-        // 네이티브 jar 는 어차피 안드로이드에서 못 씀 → 빼는 게 안전
+        // 3.3.6 신규 모듈 — patched fat jar 에 없는 클래스 제공.
+        // 패키지가 겹치지 않으므로 split package 위험 없음.
+        if (n.matches(Regex("^lwjgl-(spvc|vma|shaderc|freetype)-\\d.*\\.jar$", RegexOption.IGNORE_CASE)))
+            return false
+        // 안드로이드에선 native jar 못 씀
         if (n.contains("natives", ignoreCase = true) && n.startsWith("lwjgl", ignoreCase = true)) return true
-        // 그 외 lwjgl-3.3.1.jar, lwjgl-openal-*.jar, lwjgl-opengl-*.jar, lwjgl-stb-*.jar,
-        // lwjgl-tinyfd-*.jar, lwjgl-jemalloc-*.jar, lwjgl-freetype-*.jar … 전부 redundant
+        // 그 외 vanilla lwjgl-* (core, glfw, opengl, openal, stb, tinyfd …) 는
+        // patched fat jar 가 동급/상위 제공하므로 split package 회피 위해 제외
         return n.startsWith("lwjgl-", ignoreCase = true) || n == "lwjgl.jar"
     }
 
