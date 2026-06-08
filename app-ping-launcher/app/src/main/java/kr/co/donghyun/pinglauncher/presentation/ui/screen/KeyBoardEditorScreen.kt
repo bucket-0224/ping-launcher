@@ -54,21 +54,21 @@ private fun calcBaseScale(tablet: Boolean, density: Float): Float {
 // ────────────────────────────────────────────────────────────────────────
 private val PHONE_LAYOUT_PRESETS: Map<Int, Pair<Float, Float>> = mapOf(
     // 이동 WASD (좌측 하단, 십자형)
-    87  to (0.12f to 0.7f),  // W
+    87  to (0.14f to 0.7f),  // W
     65  to (0.06f to 0.88f),  // A
-    83  to (0.12f to 0.88f),  // S
-    68  to (0.18f to 0.88f),  // D
+    83  to (0.14f to 0.88f),  // S
+    68  to (0.22f to 0.88f),  // D
 
     // 기능키 (좌측 상단)
-    256 to (0.04f to 0.10f),  // ESC
-    292 to (0.12f to 0.10f),  // F3
-    294 to (0.20f to 0.10f),  // F5
-    -6  to (0.28f to 0.10f),  // 키보드 토글
+    256 to (0.06f to 0.10f),  // ESC
+    292 to (0.14f to 0.10f),  // F3
+    294 to (0.22f to 0.10f),  // F5
+    -6  to (0.30f to 0.10f),  // 키보드 토글
 
     // 채팅/커맨드/드롭 (좌측 중단)
-    84  to (0.04f to 0.28f),  // T
-    47  to (0.12f to 0.28f),  // /
-    81  to (0.20f to 0.28f),  // Q
+    84  to (0.06f to 0.28f),  // T
+    47  to (0.14f to 0.28f),  // /
+    81  to (0.22f to 0.28f),  // Q
 
     // 우측 인벤토리 / 슬롯
     69  to (0.96f to 0.7f),  // E (인벤토리)
