@@ -120,6 +120,29 @@ void updateWindowSize(void* window) {
 }
 
 void pojavPumpEvents(void* window) {
+    static int s_logged = 0;
+    if (s_logged < 3) {
+        LOGI("🔍 [pump lib] pojav_environ=%p &pojav_environ=%p cursorX_addr=%p",
+             pojav_environ, &pojav_environ, &pojav_environ->cursorX);
+        s_logged++;
+    }
+
+    static double s_lastCx = -99999, s_lastCy = -99999;
+    if (pojav_environ->cursorX != s_lastCx || pojav_environ->cursorY != s_lastCy) {
+        LOGI("🎯 pump sees cursor change: (%.1f,%.1f)→(%.1f,%.1f) shouldUpdate=%d cb=%p",
+             s_lastCx, s_lastCy,
+             pojav_environ->cursorX, pojav_environ->cursorY,
+             pojav_environ->shouldUpdateMouse,
+             pojav_environ->GLFW_invoke_CursorPos);
+        s_lastCx = pojav_environ->cursorX;
+        s_lastCy = pojav_environ->cursorY;
+    }
+
+    if (pojav_environ->shouldUpdateMouse) {
+        LOGI("🎯 DISPATCH CursorPos: window=%p x=%.1f y=%.1f",
+             window, pojav_environ->cursorX, pojav_environ->cursorY);
+    }
+
     static int p_count = 0;
     if ((++p_count % 60) == 0) {
         LOGI("📤 pojavPumpEvents #%d window=%p outIdx=%zu→%zu shouldUpdateMouse=%d",
@@ -153,7 +176,11 @@ void pojavPumpEvents(void* window) {
                 if(pojav_environ->GLFW_invoke_Key) pojav_environ->GLFW_invoke_Key(window, event.i1, event.i2, event.i3, event.i4);
                 break;
             case EVENT_TYPE_MOUSE_BUTTON:
-                if(pojav_environ->GLFW_invoke_MouseButton) pojav_environ->GLFW_invoke_MouseButton(window, event.i1, event.i2, event.i3);
+                LOGI("🎯 DISPATCH MouseButton: window=%p btn=%d act=%d (cursor=%.1f,%.1f)",
+                     window, event.i1, event.i2,
+                     pojav_environ->cursorX, pojav_environ->cursorY);
+                if(pojav_environ->GLFW_invoke_MouseButton)
+                    pojav_environ->GLFW_invoke_MouseButton(window, event.i1, event.i2, event.i3);
                 break;
             case EVENT_TYPE_SCROLL:
                 if(pojav_environ->GLFW_invoke_Scroll) pojav_environ->GLFW_invoke_Scroll(window, event.i1, event.i2);
@@ -184,6 +211,7 @@ void pojavStartPumping() {
              s_count,
              atomic_load_explicit(&pojav_environ->eventCounter, memory_order_acquire));
     }
+
 
     size_t counter = atomic_load_explicit(&pojav_environ->eventCounter, memory_order_acquire);
     size_t index = pojav_environ->outEventIndex;
@@ -405,6 +433,13 @@ void critical_send_cursor_pos(jfloat x, jfloat y) {
 #ifdef DEBUG
         LOGD("pojav_environ->GLFW_invoke_CursorPos && pojav_environ->isInputReady \n");
 #endif
+        static int s_logged = 0;
+        if (s_logged < 3) {
+            LOGI("🔍 [cursor_pos lib] pojav_environ=%p &pojav_environ=%p cursorX_addr=%p",
+                 pojav_environ, &pojav_environ, &pojav_environ->cursorX);
+            s_logged++;
+        }
+
         LOGI("📍 cursor_pos(%.1f, %.1f) cb=%p ready=%d grab=%d entered=%d",
              x, y,
              pojav_environ->GLFW_invoke_CursorPos,
@@ -434,6 +469,9 @@ void critical_send_cursor_pos(jfloat x, jfloat y) {
             pojav_environ->cursorY = y;
         }
     }
+    LOGI("📍 cursor_pos EXIT: cursorX=%.1f cursorY=%.1f cLastX=%.1f cLastY=%.1f",
+         pojav_environ->cursorX, pojav_environ->cursorY,
+         pojav_environ->cLastX, pojav_environ->cLastY);
 }
 
 void noncritical_send_cursor_pos(__attribute__((unused)) JNIEnv* env, __attribute__((unused)) jclass clazz,  jfloat x, jfloat y) {
