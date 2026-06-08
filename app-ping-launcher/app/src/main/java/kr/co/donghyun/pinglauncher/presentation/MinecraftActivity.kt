@@ -467,6 +467,15 @@ class MinecraftActivity : BaseActivity() {
             "glfwMaximizeWindow(J)V",
             "glfwRestoreWindow(J)V",
             "glfwRequestWindowAttention(J)V",
+            // ── 3.3.6 신규 (ZL2 가 추가로 채워둔 것) ──
+            "glfwInitAllocator(J)V",
+            "glfwGetWindowContentScale(JLjava/nio/IntBuffer;Ljava/nio/IntBuffer;)V",
+            "glfwSetWindowContentScaleCallback(JLorg/lwjgl/glfw/GLFWWindowContentScaleCallbackI;)Lorg/lwjgl/glfw/GLFWWindowContentScaleCallback;",
+            // ── IME 관련 (3.4 preview, 3.3.6 에도 일부 포함) ──
+            "glfwSetPreeditCursorRectangle(JIIII)V",
+            "glfwInitAllocator(J)V",
+            "glfwGetWindowContentScale(JLjava/nio/IntBuffer;Ljava/nio/IntBuffer;)V",
+            "glfwGetPreeditCursorRectangle(JLjava/nio/IntBuffer;Ljava/nio/IntBuffer;Ljava/nio/IntBuffer;Ljava/nio/IntBuffer;)V",
         )
 
         for (jar in candidates) {
