@@ -121,6 +121,8 @@ static void gl4esi_get_display_dimensions(int* width, int* height) {
 
 gl_render_window_t* gl_init_context(gl_render_window_t *share) {
     gl_render_window_t* bundle = malloc(sizeof(gl_render_window_t));
+    LOGI("📍 gl_init_context CREATED bundle=%p share=%p", bundle, share);
+
     memset(bundle, 0, sizeof(gl_render_window_t));
     EGLint egl_attributes[] = { EGL_BLUE_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_RED_SIZE, 8, EGL_ALPHA_SIZE, 8, EGL_DEPTH_SIZE, 24, EGL_SURFACE_TYPE, EGL_WINDOW_BIT|EGL_PBUFFER_BIT, EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT, EGL_NONE };
     EGLint num_configs = 0;
@@ -222,6 +224,10 @@ void gl_swap_surface(gl_render_window_t* bundle) {
 }
 
 void gl_make_current(gl_render_window_t* bundle) {
+    LOGI("📍 gl_make_current bundle=%p (mainWindowBundle=%p, isNull=%d)",
+         bundle, pojav_environ->mainWindowBundle,
+         pojav_environ->mainWindowBundle == NULL);
+
     if(bundle == NULL) {
         // ★ 변경: NULL makeCurrent 를 무시하지 말고 정말로 detach 한다.
         //   LTW/LWJGL 이 cross-thread context 이관할 때 필수.

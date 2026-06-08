@@ -40,6 +40,52 @@ void* stdout_logger_thread_func(void*) {
     return nullptr;
 }
 
+static void registerGLFWInputCallbacks(JNIEnv* env) {
+    jclass glfwClass = env->FindClass("org/lwjgl/glfw/GLFW");
+    if (!glfwClass) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return;
+    }
+
+    void* h = dlopen("libpojavexec.so", RTLD_NOLOAD | RTLD_NOW);
+    if (!h) h = dlopen("libglfw.so", RTLD_NOLOAD | RTLD_NOW);
+    if (!h) { env->DeleteLocalRef(glfwClass); return; }
+
+    struct { const char* jname; const char* sym; const char* sig; } binds[] = {
+            {"nglfwSetMouseButtonCallback",
+                    "Java_org_lwjgl_glfw_GLFW_nglfwSetMouseButtonCallback",  "(JJ)J"},
+            {"nglfwSetCursorPosCallback",
+                    "Java_org_lwjgl_glfw_GLFW_nglfwSetCursorPosCallback",    "(JJ)J"},
+            {"nglfwSetCursorEnterCallback",
+                    "Java_org_lwjgl_glfw_GLFW_nglfwSetCursorEnterCallback",  "(JJ)J"},
+            {"nglfwSetScrollCallback",
+                    "Java_org_lwjgl_glfw_GLFW_nglfwSetScrollCallback",       "(JJ)J"},
+            {"nglfwSetKeyCallback",
+                    "Java_org_lwjgl_glfw_GLFW_nglfwSetKeyCallback",          "(JJ)J"},
+            {"nglfwSetCharCallback",
+                    "Java_org_lwjgl_glfw_GLFW_nglfwSetCharCallback",         "(JJ)J"},
+            {"nglfwSetCharModsCallback",
+                    "Java_org_lwjgl_glfw_GLFW_nglfwSetCharModsCallback",     "(JJ)J"},
+    };
+
+    for (auto& b : binds) {
+        void* fn = dlsym(h, b.sym);
+        if (!fn) {
+            LOGE("  ❌ %s 심볼 없음", b.sym);
+            continue;
+        }
+        JNINativeMethod m = { (char*)b.jname, (char*)b.sig, fn };
+        jint r = env->RegisterNatives(glfwClass, &m, 1);
+        if (r != 0 || env->ExceptionCheck()) {
+            LOGE("  ❌ RegisterNatives %s 실패: %d", b.jname, r);
+            if (env->ExceptionCheck()) env->ExceptionClear();
+        } else {
+            LOGI("  ✅ RegisterNatives %s → %p", b.jname, fn);
+        }
+    }
+    env->DeleteLocalRef(glfwClass);
+}
+
 // pingjvm.cpp에 추가
 static bool g_isGrabbing = false;
 typedef void (*SetGrabbing_t)(JNIEnv*, jclass, jboolean);
@@ -543,6 +589,7 @@ Java_kr_co_donghyun_pinglauncher_presentation_util_jni_JavaNativeLauncher_bootMi
     }
     LOGI("✅ 내장 JVM 부팅 성공!");
     installGrabbingHook();
+    registerGLFWInputCallbacks(customEnv);
 
     // ── 마인크래프트 메인 클래스 로드 ───────────────────────────
     // 시스템 프로퍼티에서 mainClass 읽기

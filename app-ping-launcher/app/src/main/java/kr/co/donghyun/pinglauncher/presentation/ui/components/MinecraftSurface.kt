@@ -104,17 +104,29 @@ fun MinecraftSurface(
                                 isDragging = false
                                 isLongPress = false
 
+                                Log.d("PING_LAUNCHER",
+                                    "🖱 SurfaceView DOWN x=${event.x} y=${event.y} isGrabbing=${activity.isGrabbing}")
+
                                 if (!activity.isGrabbing) {
-                                    // ── UI 모드 (인벤토리/메뉴) — 기존 동작 유지 ──
                                     activity.currentCursorX = event.x
                                     activity.currentCursorY = event.y
                                     try {
                                         val cb = Class.forName("org.lwjgl.glfw.CallbackBridge")
+                                        cb.getMethod("nativeSetInputReady", Boolean::class.java).invoke(null, true)
                                         cb.getMethod("nativeSendCursorPos", Float::class.java, Float::class.java)
                                             .invoke(null, activity.currentCursorX, activity.currentCursorY)
                                         cb.getMethod("nativeSendMouseButton", Int::class.java, Int::class.java, Int::class.java)
                                             .invoke(null, 0, 1, 0)
-                                    } catch (_: Exception) {}
+                                        Log.d("PING_LAUNCHER", "🖱 cursorPos+mouseDown 전송 완료")
+                                    } catch (e: Exception) {
+                                        Log.e("PING_LAUNCHER", "🖱 마우스 이벤트 전송 실패", e)
+                                    }
+                                    // ★ 진단: 콜백 상태 덤프
+                                    try { activity.javaClass
+                                        .getDeclaredMethod("nativeDumpCharCallback")
+                                        .apply { isAccessible = true }
+                                        .invoke(activity)
+                                    } catch (_: Throwable) {}
                                 } else {
                                     // ── 인게임 모드 — 롱프레스 타이머 ──
                                     // 전투 모드: 길게 = 우클릭 유지 (방패/활)
@@ -210,6 +222,8 @@ fun MinecraftSurface(
                                 isLongPress = false
                                 isDragging = false
                             }
+
+
                         }
                     } catch (_: Exception) {}
                     true

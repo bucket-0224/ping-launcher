@@ -120,6 +120,15 @@ void updateWindowSize(void* window) {
 }
 
 void pojavPumpEvents(void* window) {
+    static int p_count = 0;
+    if ((++p_count % 60) == 0) {
+        LOGI("📤 pojavPumpEvents #%d window=%p outIdx=%zu→%zu shouldUpdateMouse=%d",
+             p_count, window,
+             pojav_environ->outEventIndex,
+             pojav_environ->outTargetIndex,
+             pojav_environ->shouldUpdateMouse);
+    }
+
     if(pojav_environ->shouldUpdateMouse) {
         pojav_environ->GLFW_invoke_CursorPos(window, floor(pojav_environ->cursorX),
                                              floor(pojav_environ->cursorY));
@@ -169,6 +178,13 @@ void pojavPumpEvents(void* window) {
 
 /** Prepare the library for sending out callbacks to all windows */
 void pojavStartPumping() {
+    static int s_count = 0;
+    if ((++s_count % 60) == 0) {
+        LOGI("📥 pojavStartPumping #%d eventCounter=%zu",
+             s_count,
+             atomic_load_explicit(&pojav_environ->eventCounter, memory_order_acquire));
+    }
+
     size_t counter = atomic_load_explicit(&pojav_environ->eventCounter, memory_order_acquire);
     size_t index = pojav_environ->outEventIndex;
 
@@ -196,6 +212,11 @@ void pojavStartPumping() {
 
 /** Prepare the library for the next round of new events */
 void pojavStopPumping() {
+    static int s_count = 0;
+    if ((++s_count % 60) == 0) {
+        LOGI("✅ pojavStopPumping #%d inEventCount=%zu", s_count, pojav_environ->inEventCount);
+    }
+
     pojav_environ->outEventIndex = pojav_environ->outTargetIndex;
 
     // New events may have arrived while pumping, so remove only the difference before the start and end of execution
@@ -384,6 +405,13 @@ void critical_send_cursor_pos(jfloat x, jfloat y) {
 #ifdef DEBUG
         LOGD("pojav_environ->GLFW_invoke_CursorPos && pojav_environ->isInputReady \n");
 #endif
+        LOGI("📍 cursor_pos(%.1f, %.1f) cb=%p ready=%d grab=%d entered=%d",
+             x, y,
+             pojav_environ->GLFW_invoke_CursorPos,
+             pojav_environ->isInputReady,
+             pojav_environ->isGrabbing,
+             pojav_environ->isCursorEntered);
+
         if (!pojav_environ->isCursorEntered) {
             if (pojav_environ->GLFW_invoke_CursorEnter) {
                 pojav_environ->isCursorEntered = true;
@@ -430,6 +458,11 @@ void noncritical_send_key(__attribute__((unused)) JNIEnv* env, __attribute__((un
 }
 
 void critical_send_mouse_button(jint button, jint action, jint mods) {
+    LOGI("🖱️ mouse_btn(btn=%d, act=%d) cb=%p ready=%d stackQ=%d",
+         button, action,
+         pojav_environ->GLFW_invoke_MouseButton,
+         pojav_environ->isInputReady,
+         pojav_environ->isUseStackQueueCall);
     if (pojav_environ->GLFW_invoke_MouseButton && pojav_environ->isInputReady) {
         pojav_environ->mouseDownBuffer[max(0, button)] = (jbyte) action;
         if (pojav_environ->isUseStackQueueCall) {

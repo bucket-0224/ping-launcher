@@ -58,7 +58,6 @@ class MinecraftActivity : BaseActivity() {
     private external fun nativeIsGrabbing(): Boolean
     private external fun nativeSetupBridgeWindow(surface: Surface)
     private external fun nativeTrySetupShowingWindow(): Boolean
-    private external fun nativeDumpInputState()
 
 
     // Intent로 전달받은 버전 정보
@@ -71,7 +70,6 @@ class MinecraftActivity : BaseActivity() {
     private var currentSurface: Surface? = null
     @Volatile var combatMode: Boolean = false
 
-    private var forceShowController: Boolean? = null
 
     private val PROCESSOR_ONLY_JAR_PREFIXES = listOf(
         "ForgeAutoRenamingTool",
@@ -788,10 +786,15 @@ class MinecraftActivity : BaseActivity() {
         reader.accept(visitor, 0)
         return writer.toByteArray()
     }
+
     internal fun sendMouseButton(button: Int, action: Int) {
         try {
-            Class.forName("org.lwjgl.glfw.CallbackBridge")
-                .getMethod("nativeSendMouseButton", Int::class.java, Int::class.java, Int::class.java)
+            val cb = Class.forName("org.lwjgl.glfw.CallbackBridge")
+            // ★ sendKey 와 동일하게 InputReady 강제 ON
+            // PojavLauncher 원본은 surfaceCreated 에서 한 번 켜주는데 우리 포팅엔 빠져있음.
+            // 이게 없으면 MC 메인 메뉴에서 첫 클릭이 조용히 버려진다.
+            cb.getMethod("nativeSetInputReady", Boolean::class.java).invoke(null, true)
+            cb.getMethod("nativeSendMouseButton", Int::class.java, Int::class.java, Int::class.java)
                 .invoke(null, button, action, 0)
         } catch (_: Exception) {}
     }
@@ -1456,6 +1459,7 @@ class MinecraftActivity : BaseActivity() {
             val deadline = System.currentTimeMillis() + 120_000
             var attempts = 0
             var success = false
+            var inputReadySet = false   // ★ 추가
 
             while (System.currentTimeMillis() < deadline) {
                 attempts++
@@ -1466,6 +1470,21 @@ class MinecraftActivity : BaseActivity() {
                         // 한 번 성공해도 MC 가 풀스크린/리사이즈 하면 새 window 가 생길 수 있어서
                         // 5초마다 재확인. 같은 핸들이면 native 쪽이 어차피 노옵.
                         Thread.sleep(5000)
+                        if (!inputReadySet) {
+                            try {
+                                val cb = Class.forName("org.lwjgl.glfw.CallbackBridge")
+                                cb.getMethod("nativeSetInputReady", Boolean::class.java).invoke(null, true)
+                                // ★ 추가: 마우스/커서 콜백을 MC 메인 스레드에서 처리하도록 큐 모드 강제
+                                //   stackQ=0 이면 Android UI 스레드에서 직접 GLFW_invoke_MouseButton 을 동기 호출하는데,
+                                //   MC 1.13+ 는 입력을 자기 메인 스레드 polling 으로만 받아서 silently 무시함.
+                                //   stackQ=1 이면 이벤트가 큐에 쌓이고 pojavPumpEvents() 시점에 MC 메인 스레드에서 dispatch.
+                                cb.getMethod("nativeSetUseInputStackQueue", Boolean::class.java).invoke(null, true)
+                                inputReadySet = true
+                                Log.d("PING_LAUNCHER", "✅ InputReady=true, stackQueue=true 설정")
+                            } catch (e: Throwable) {
+                                Log.w("PING_LAUNCHER", "Input 초기화 실패: ${e.message}")
+                            }
+                        }
                         continue
                     }
                     if (attempts % 20 == 0) {
