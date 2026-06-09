@@ -94,8 +94,10 @@ data class JvmSettings(
             "-Dorg.lwjgl.util.DebugLoader=true",
             "-Dfml.earlyprogresswindow=false",
             "-Dorg.lwjgl.opengl.Display.allowSoftwareOpenGL=true",
-            "-Djava.io.tmpdir=${cacheDirPath}",
+            "-Djava.io.tmpdir=${cacheDirPath}"
         )
+
+
 
         if (renderer.id == "mobileglues" || renderer.id == "ltw") {
             args += listOf(

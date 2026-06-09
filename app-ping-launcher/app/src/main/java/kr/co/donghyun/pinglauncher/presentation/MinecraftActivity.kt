@@ -1187,7 +1187,6 @@ class MinecraftActivity : BaseActivity() {
                 "--add-opens", "java.base/java.io=ALL-UNNAMED",
                 "--add-opens", "java.base/sun.nio.ch=ALL-UNNAMED",
                 "--add-exports", "java.base/sun.security.util=ALL-UNNAMED",
-                "--add-exports", "jdk.naming.dns/com.sun.jndi.dns=java.naming",
             )
         } else emptyArray()
 
@@ -1274,6 +1273,27 @@ class MinecraftActivity : BaseActivity() {
         }
         val classPathStr = dedupedJars.joinToString(File.pathSeparator)
 
+        val jndiDnsArgs: Array<String> = if (isModularJre) {
+            arrayOf(
+                "--add-exports", "jdk.naming.dns/com.sun.jndi.dns=java.naming",
+                "--add-modules", "jdk.naming.dns",
+            )
+        } else emptyArray()
+
+        val dnsServers = DnsHookNative.getActiveDnsServers()
+        val dnsProviderUrl = dnsServers.joinToString(" ") { "dns://$it" }
+
+        val dnsArgs = arrayOf(
+            // JNDI DNS 공급자 강제 설정 (SRV 조회 해결의 핵심)
+            "-Djava.naming.provider.url=$dnsProviderUrl",
+            "-Dsun.net.spi.nameservice.nameservers=${dnsServers.first()}",
+            "-Dsun.net.spi.nameservice.provider.1=dns,sun",
+            "-Dnetworkaddress.cache.ttl=0",
+            "-Dnetworkaddress.cache.negative.ttl=0",
+            "-Dsun.net.inetaddr.ttl=0",
+            "-Dsun.net.inetaddr.negative.ttl=0"
+        )
+
         val jvmArgs = jvm8CompatArgs +
                 jvmSettings.toJvmArgArray(
                     context = this,
@@ -1284,8 +1304,10 @@ class MinecraftActivity : BaseActivity() {
                     mainClass = mainClass,
                     versionId = versionId
                 ) +
+                dnsArgs +
                 launchWrapperArgs +
                 fabricJvmArgs +
+                jndiDnsArgs +
                 modernForgeArgs +     // ★ 추가 — metaJvmArgs 보다 앞에 둬서 version.json 인자가 덮어쓰도록
                 metaJvmArgs
 
