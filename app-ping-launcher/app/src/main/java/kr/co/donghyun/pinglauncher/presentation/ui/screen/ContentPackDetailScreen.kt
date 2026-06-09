@@ -1,7 +1,9 @@
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -13,12 +15,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import kr.co.donghyun.pinglauncher.data.setting.Setting
+import kr.co.donghyun.pinglauncher.data.setting.SettingManager
 import kr.co.donghyun.pinglauncher.presentation.ContentDetail
+import kr.co.donghyun.pinglauncher.presentation.ui.theme.TextPrimary
+import kr.co.donghyun.pinglauncher.presentation.ui.theme.TextSecondary
 import kr.co.donghyun.pinglauncher.presentation.util.window.isTablet
 
 /**
@@ -55,6 +62,12 @@ fun ContentPackDetailScreen(
     val BgBorder = Color(0xFF3D1A32)
     val TextMain = Color(0xFFFCE4EC)
     val TextSub = Color(0xFFBB86A0)
+
+    val context = LocalContext.current
+    var showCautionDialog by remember { mutableStateOf(false) }
+    var doNotShowAgain by remember { mutableStateOf(false) }
+
+    val setting = SettingManager.load(context)
 
     Column(
         modifier = Modifier
@@ -234,7 +247,7 @@ fun ContentPackDetailScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Button(
-                onClick = { if (isInstalled) onLaunch() else onInstall() },
+                onClick = { if (isInstalled) onLaunch() else showCautionDialog = true },
                 colors = ButtonDefaults.buttonColors(containerColor = Pink),
                 shape = RoundedCornerShape(10.dp),
                 modifier = Modifier
@@ -248,6 +261,67 @@ fun ContentPackDetailScreen(
                     fontWeight = FontWeight.Bold
                 )
             }
+        }
+        if (showCautionDialog) {
+            AlertDialog(
+                onDismissRequest = { showCautionDialog = false },
+                title = { Text("⚠️: 모드팩은 완전하지 않습니다.", color = TextPrimary) },
+                text = {
+                    Column {
+                        Text(
+                            text = """
+                        일부 모드팩은 강제로 크래시가 발생하거나, 이에 따라 앱이 종료되는 경험을 겪을 수 있습니다.
+                        이는 모드팩들이 JAVA를 기반으로 만들어진 것이 많기 때문에 발생하는 문제로써 해당 문제는 직접적으로 해결할 수 없습니다.
+                        크래시에 대한 원인 규명을 제공하고, 일부 모드를 ON/OFF 하는 편의적 기능은 제공하지만, 완전한 해결책이 될 수 없습니다.
+                        
+                        따라서 유저 간의 커뮤니티를 형성하여 직접 해결하는 것을 추천드리며, 개발자는 모드팩 설치로 인한 직/간접적인 이슈에 대해서 책임지지 않습니다.
+                    """.trimIndent(),
+                            color = TextSecondary,
+                            fontSize = 13.sp,
+                        )
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        // '다시 보지 않기' 체크박스 영역
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                // 🔥 체크박스의 기본 내부 여백만큼 왼쪽으로 당겨서 본문과 좌측 정렬을 맞춤
+                                .offset(x = (-12).dp)
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                    onClick = { doNotShowAgain = !doNotShowAgain }
+                                )
+                        ) {
+                            Checkbox(
+                                checked = doNotShowAgain,
+                                onCheckedChange = { doNotShowAgain = it }
+                            )
+                            // Checkbox 자체의 여백이 있으므로 Spacer는 제거하거나 폭을 줄이는 것이 좋습니다.
+                            Text(
+                                text = "다시 보지 않기",
+                                color = TextSecondary,
+                                fontSize = 14.sp
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showCautionDialog = false
+
+                        SettingManager.save(context, setting.copy(neverShowCautionAgain = doNotShowAgain))
+                    }) { Text("이해했습니다.", color = TextMain) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showCautionDialog = false }) {
+                        Text("취소", color = TextSecondary)
+                    }
+                },
+                containerColor = BgSurface,
+            )
         }
     }
 }

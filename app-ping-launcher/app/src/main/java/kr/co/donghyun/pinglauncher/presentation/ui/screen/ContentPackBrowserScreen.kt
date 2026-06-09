@@ -94,6 +94,7 @@ fun ContentPackBrowserScreen(
         }
     }
 
+    var showCautionDialog by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     val ctx = LocalContext.current
     val supportedVersions = listOf("", "1.21.1", "1.20.1", "1.19.4", "1.18.2", "1.16.5", "1.12.2")
@@ -154,7 +155,7 @@ fun ContentPackBrowserScreen(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 contentPadding = PaddingValues(horizontal = 2.dp)
             ) {
-                items(ContentType.values().toList()) { type ->
+                items(ContentType.entries) { type ->
                     val isSelected = selectedContentType == type
                     Box(
                         modifier = Modifier
@@ -258,6 +259,38 @@ fun ContentPackBrowserScreen(
                 }
             }
         }
+
+        if (showCautionDialog) {
+            AlertDialog(
+                onDismissRequest = { showCautionDialog = false },
+                title = { Text("⚠️주의: 모드팩은 제대로 호환되지 않을 수 있습니다.", color = TextPrimary) },
+                text = {
+                    Text(
+                        """
+                            모드팩은 기존 Forge/Fabric/NeoForge에 맞게 호환되도록 설계되었습니다.
+                            모드팩이 런처에서는 제대로 동작하지 않을 수 있으며, 일부 모드가 호환되지 않을 수 있습니다.
+                            크래시 원인을 공유하거나, 오류 원인이 되는 모드들에 대해서 모드를 키거나 끄도록 유도하는 기능을 제공하고 있으나,
+                            개발자는 이러한 호환 문제에 대해 Issue를 제공받지 않습니다. 
+                            
+                            따라서 유저가 활성화된 커뮤니티에서 해결 방안을 논의하는 것을 추천드립니다. 
+                        """.trimIndent(),
+                        color = TextSecondary,
+                        fontSize = 13.sp,
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showCautionDialog = false
+                    }) { Text("이해했습니다.", color = Color(0xFFFF6B6B)) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showCautionDialog = false }) {
+                        Text("취소", color = TextSecondary)
+                    }
+                },
+                containerColor = kr.co.donghyun.pinglauncher.presentation.ui.theme.BgSurface,
+            )
+        }
     }
 }
 
@@ -315,25 +348,25 @@ fun ContentPackItem(
             )
         }
 
-        Box(contentAlignment = Alignment.Center) {
-            if (isInstalling) {
-                CircularProgressIndicator(color = Pink, modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-            } else {
-                Button(
-                    onClick = { if (isInstalled) onLaunch() else onInstall() },
-                    colors = ButtonDefaults.buttonColors(containerColor = Pink),
-                    shape = RoundedCornerShape(6.dp),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                    modifier = Modifier.height(if (tablet) 32.dp else 28.dp)
-                ) {
-                    Text(
-                        text = if (isInstalled) "▶ 열기" else "설치",
-                        color = Color.White,
-                        fontSize = if (tablet) 11.sp else 9.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-        }
+//        Box(contentAlignment = Alignment.Center) {
+//            if (isInstalling) {
+//                CircularProgressIndicator(color = Pink, modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+//            } else {
+//                Button(
+//                    onClick = { if (isInstalled) onLaunch() else onInstall() },
+//                    colors = ButtonDefaults.buttonColors(containerColor = Pink),
+//                    shape = RoundedCornerShape(6.dp),
+//                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+//                    modifier = Modifier.height(if (tablet) 32.dp else 28.dp)
+//                ) {
+//                    Text(
+//                        text = if (isInstalled) "▶ 열기" else "설치",
+//                        color = Color.White,
+//                        fontSize = if (tablet) 11.sp else 9.sp,
+//                        fontWeight = FontWeight.Bold
+//                    )
+//                }
+//            }
+//        }
     }
 }
