@@ -325,7 +325,6 @@ class MinecraftActivity : BaseActivity() {
 
         // 공통 .so — 하나가 실패해도 다음 것은 계속 시도
         loadSoSafely(File(nativesDir, "libopenal.so"), required = false)
-        loadSoSafely(File(nativesDir, "libglfw.so"), required = true)
         loadSoSafely(File(nativesDir, "libpojavexec.so"), required = true)
         loadSoSafely(File(nativesDir, "liblwjgl.so"), required = false)
         loadSoSafely(File(nativesDir, "liblwjgl_opengl.so"), required = false)
@@ -469,14 +468,15 @@ class MinecraftActivity : BaseActivity() {
             "glfwRequestWindowAttention(J)V",
             // ── 3.3.6 신규 (ZL2 가 추가로 채워둔 것) ──
             "glfwInitAllocator(J)V",
-            "glfwGetWindowContentScale(JLjava/nio/IntBuffer;Ljava/nio/IntBuffer;)V",
             "glfwSetWindowContentScaleCallback(JLorg/lwjgl/glfw/GLFWWindowContentScaleCallbackI;)Lorg/lwjgl/glfw/GLFWWindowContentScaleCallback;",
             // ── IME 관련 (3.4 preview, 3.3.6 에도 일부 포함) ──
             "glfwSetPreeditCursorRectangle(JIIII)V",
             "glfwInitAllocator(J)V",
-            "glfwGetWindowContentScale(JLjava/nio/IntBuffer;Ljava/nio/IntBuffer;)V",
+            "glfwGetWindowContentScale(J[F[F)V",
+            "glfwGetWindowContentScale(JLjava/nio/FloatBuffer;Ljava/nio/FloatBuffer;)V",
             "glfwGetPreeditCursorRectangle(JLjava/nio/IntBuffer;Ljava/nio/IntBuffer;Ljava/nio/IntBuffer;Ljava/nio/IntBuffer;)V",
-        )
+            "glfwGetMonitorName(J)Ljava/lang/String;",
+            )
 
         for (jar in candidates) {
             val missing = findMissingMethods(jar, required)
@@ -537,9 +537,11 @@ class MinecraftActivity : BaseActivity() {
                 while (entries.hasMoreElements()) {
                     val entry = entries.nextElement()
                     val bytes = zin.getInputStream(entry).readBytes()
-                    val finalBytes = if (entry.name == "org/lwjgl/glfw/GLFW.class") {
-                        patchGlfwClass(bytes)
-                    } else bytes
+                    val finalBytes = when (entry.name) {
+                        "org/lwjgl/glfw/GLFW.class" -> patchGlfwClass(bytes)
+                        "org/lwjgl/system/MemoryUtil.class" -> patchMemoryUtilClass(bytes)
+                        else -> bytes
+                    }
 
                     // 새 ZipEntry 로 만들어야 CRC/size 자동 계산. DEFLATED 로 통일.
                     val newEntry = ZipEntry(entry.name).apply {
@@ -553,6 +555,60 @@ class MinecraftActivity : BaseActivity() {
         }
         if (!jar.delete()) throw IOException("기존 jar 삭제 실패: ${jar.absolutePath}")
         if (!tmp.renameTo(jar)) throw IOException("임시 jar rename 실패")
+    }
+
+    private fun patchMemoryUtilClass(bytes: ByteArray): ByteArray {
+        val ASM = Opcodes.ASM9
+
+        val existing = HashSet<String>()
+        ClassReader(bytes).accept(object : ClassVisitor(ASM) {
+            override fun visitMethod(
+                access: Int, name: String, descriptor: String,
+                signature: String?, exceptions: Array<out String>?
+            ): org.objectweb.asm.MethodVisitor? {
+                existing.add("$name$descriptor")
+                return null
+            }
+        }, ClassReader.SKIP_CODE)
+
+        val reader = ClassReader(bytes)
+        val writer = ClassWriter(reader, ClassWriter.COMPUTE_FRAMES)
+
+        reader.accept(object : ClassVisitor(ASM, writer) {
+            override fun visitEnd() {
+                // memFree 다른 시그니처들도 같이 (ByteBuffer 외)
+                addBufferOverload("memFree", "Ljava/nio/ByteBuffer;")
+                addBufferOverload("memFree", "Ljava/nio/IntBuffer;")
+                addBufferOverload("memFree", "Ljava/nio/FloatBuffer;")
+                addBufferOverload("memFree", "Ljava/nio/DoubleBuffer;")
+                addBufferOverload("memFree", "Ljava/nio/LongBuffer;")
+                addBufferOverload("memFree", "Ljava/nio/ShortBuffer;")
+                super.visitEnd()
+            }
+
+            private fun addBufferOverload(name: String, bufferDesc: String) {
+                val targetDesc = "($bufferDesc)V"
+                if ("$name$targetDesc" in existing) return
+
+                val mv = cv.visitMethod(
+                    Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC,
+                    name, targetDesc, null, null
+                )
+                mv.visitCode()
+                mv.visitVarInsn(Opcodes.ALOAD, 0)
+                mv.visitMethodInsn(
+                    Opcodes.INVOKESTATIC,
+                    "org/lwjgl/system/MemoryUtil",
+                    name, "(Ljava/nio/Buffer;)V", false
+                )
+                mv.visitInsn(Opcodes.RETURN)
+                mv.visitMaxs(1, 1)
+                mv.visitEnd()
+                Log.d("PING_LAUNCHER", "  + $name$targetDesc → Buffer 위임")
+            }
+        }, 0)
+
+        return writer.toByteArray()
     }
 
     private fun patchGlfwClass(bytes: ByteArray): ByteArray {
@@ -591,7 +647,75 @@ class MinecraftActivity : BaseActivity() {
                         emitNoopJV(n); Log.d("PING_LAUNCHER", "  + $n(J)V")
                     }
                 }
+
+                // ↓ 여기 추가
+                if ("glfwGetMonitorName(J)Ljava/lang/String;" !in existing) {
+                    emitGetMonitorName()
+                    Log.d("PING_LAUNCHER", "  + glfwGetMonitorName(J)Ljava/lang/String;")
+                }
+
+                // IME callback setter 들 — long(window) + 콜백 → 이전 콜백 반환 (null 박음)
+                listOf(
+                    Triple("glfwSetPreeditCallback",
+                        "Lorg/lwjgl/glfw/GLFWPreeditCallbackI;",
+                        "Lorg/lwjgl/glfw/GLFWPreeditCallback;"),
+                    Triple("glfwSetPreeditCandidateCallback",
+                        "Lorg/lwjgl/glfw/GLFWPreeditCandidateCallbackI;",
+                        "Lorg/lwjgl/glfw/GLFWPreeditCandidateCallback;"),
+                    Triple("glfwSetIMEStatusCallback",
+                        "Lorg/lwjgl/glfw/GLFWIMEStatusCallbackI;",
+                        "Lorg/lwjgl/glfw/GLFWIMEStatusCallback;")
+                ).forEach { (name, param, ret) ->
+                    val desc = "(J$param)$ret"
+                    if ("$name$desc" !in existing) {
+                        emitNullCallbackSetter(name, desc)
+                        Log.d("PING_LAUNCHER", "  + $name$desc")
+                    }
+                }
+
+// IME 관련 GLFW.class 메서드들
+                if ("glfwResetPreeditText(J)V" !in existing) {
+                    emitNoopJV("glfwResetPreeditText")
+                    Log.d("PING_LAUNCHER", "  + glfwResetPreeditText(J)V")
+                }
+
+                if ("glfwSetPreeditCursorRectangle(JIIII)V" !in existing) {
+                    val mv = cv.visitMethod(
+                        Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC,
+                        "glfwSetPreeditCursorRectangle", "(JIIII)V", null, null
+                    )
+                    mv.visitCode()
+                    mv.visitInsn(Opcodes.RETURN)
+                    mv.visitMaxs(0, 6)   // long(2) + int(1)*4 = 6
+                    mv.visitEnd()
+                    Log.d("PING_LAUNCHER", "  + glfwSetPreeditCursorRectangle(JIIII)V")
+                }
                 super.visitEnd()
+            }
+
+            // 그리고 emit 헬퍼 추가 (emitNoopJV 옆에)
+            private fun emitNullCallbackSetter(name: String, desc: String) {
+                val mv = cv.visitMethod(
+                    Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC,
+                    name, desc, null, null
+                )
+                mv.visitCode()
+                mv.visitInsn(Opcodes.ACONST_NULL)   // 이전 callback null
+                mv.visitInsn(Opcodes.ARETURN)
+                mv.visitMaxs(1, 3)   // long(2) + callback(1) = 3
+                mv.visitEnd()
+            }
+
+            private fun emitGetMonitorName() {
+                val mv = cv.visitMethod(
+                    Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC,
+                    "glfwGetMonitorName", "(J)Ljava/lang/String;", null, null
+                )
+                mv.visitCode()
+                mv.visitLdcInsn("Android Display")
+                mv.visitInsn(Opcodes.ARETURN)
+                mv.visitMaxs(1, 2)   // stack=1 (String 한 개), locals=2 (long 인자가 2 slot)
+                mv.visitEnd()
             }
 
             private fun emitPlatformSupported() {
@@ -923,16 +1047,13 @@ class MinecraftActivity : BaseActivity() {
      */
     private fun isRedundantLwjglJar(file: File): Boolean {
         val n = file.name
-        // patched fat jar 본체 — 무조건 keep
         if (n.startsWith("lwjgl-glfw-classes", ignoreCase = true)) return false
-        // 3.3.6 신규 모듈 — patched fat jar 에 없는 클래스 제공.
-        // 패키지가 겹치지 않으므로 split package 위험 없음.
-        if (n.matches(Regex("^lwjgl-(spvc|vma|shaderc|freetype)-\\d.*\\.jar$", RegexOption.IGNORE_CASE)))
-            return false
-        // 안드로이드에선 native jar 못 씀
+
+        if (n.matches(Regex(
+                "^lwjgl-(spvc|vma|shaderc|freetype|vulkan|glfw-callbacks|core)-\\d.*\\.jar$",
+                RegexOption.IGNORE_CASE))) return false
+
         if (n.contains("natives", ignoreCase = true) && n.startsWith("lwjgl", ignoreCase = true)) return true
-        // 그 외 vanilla lwjgl-* (core, glfw, opengl, openal, stb, tinyfd …) 는
-        // patched fat jar 가 동급/상위 제공하므로 split package 회피 위해 제외
         return n.startsWith("lwjgl-", ignoreCase = true) || n == "lwjgl.jar"
     }
 
@@ -985,18 +1106,29 @@ class MinecraftActivity : BaseActivity() {
 
         // patched glfw를 분리해서 맨 앞으로
         val patchedGlfw = lwjglJars.find { it.name.contains("glfw-classes") }
+        val vanillaCore = lwjglJars.find { it.name.matches(Regex("^lwjgl-core-.*\\.jar$")) }
+        val vanillaCallbacks = lwjglJars.find { it.name.contains("glfw-callbacks") }
+
         lwjglJars.remove(patchedGlfw)
+        lwjglJars.remove(vanillaCore)
+        lwjglJars.remove(vanillaCallbacks)
         lwjglJars.sortBy { it.name }
 
+// 새 순서: vanilla core (APIUtil 등) → vanilla callbacks → patched (GLFW, opengl, openal, stb...) → 나머지
+        if (vanillaCore != null) {
+            Log.d("PING_LAUNCHER", "🔧 vanilla LWJGL core 우선 주입: ${vanillaCore.name}")
+            jarList.add(vanillaCore.absolutePath)
+        }
+        if (vanillaCallbacks != null) {
+            Log.d("PING_LAUNCHER", "🔧 vanilla GLFW callbacks 주입: ${vanillaCallbacks.name}")
+            jarList.add(vanillaCallbacks.absolutePath)
+        }
         if (patchedGlfw != null) {
-            jarList.add(patchedGlfw.absolutePath)  // 0번 인덱스
-            Log.d("PING_LAUNCHER", "🔧 patched GLFW 우선 주입: ${patchedGlfw.name}")
+            Log.d("PING_LAUNCHER", "🔧 patched GLFW fat 주입: ${patchedGlfw.name}")
+            jarList.add(patchedGlfw.absolutePath)
         }
+        lwjglJars.forEach { jar -> jarList.add(jar.absolutePath) }
 
-        lwjglJars.forEach { jar ->
-            jarList.add(jar.absolutePath)
-            Log.d("PING_LAUNCHER", "🔧 LWJGL jar 주입: ${jar.name}")
-        }
         val cleanedExtraJars = extraJars.filter { p ->
             val f = File(p)
             when {

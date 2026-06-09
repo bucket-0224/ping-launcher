@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22.1)
 project("pingjvm")
 
-# ── bytehook (AAR에서 제공하는 CMake config) ───────────────────
+# ── bytehook ──────────────────────────────────────────────────
 find_package(bytehook REQUIRED CONFIG)
 
 # ── 시스템 라이브러리 ─────────────────────────────────────────
@@ -11,7 +11,7 @@ find_library(GLESv2-lib GLESv2)
 find_library(android-lib android)
 find_library(dl-lib dl)
 
-# ── pingjvm (JVM 부팅) ────────────────────────────────────────
+# ── pingjvm (JVM 부팅 — PingLauncher 전용, 유지) ──────────────
 add_library(pingjvm SHARED pingjvm.cpp)
 target_include_directories(pingjvm PRIVATE
         pojav_jni
@@ -19,104 +19,43 @@ target_include_directories(pingjvm PRIVATE
 )
 target_link_libraries(pingjvm ${log-lib})
 
-# ── PojavLauncher core 소스 (awt_bridge.c 제외) ───────────────
-set(POJAV_SOURCES
-        pojav_jni/egl_bridge.c
-        pojav_jni/utils.c
-        pojav_jni/stdio_is.c
-        pojav_jni/bigcoreaffinity.c
-        pojav_jni/input_bridge_v3.c
-        pojav_jni/environ/environ.c
-        pojav_jni/ctxbridges/gl_bridge.c
-        pojav_jni/ctxbridges/egl_loader.c
-        pojav_jni/ctxbridges/osm_bridge.c
-        pojav_jni/ctxbridges/osmesa_loader.c
-        pojav_jni/ctxbridges/loader_dlopen.c
-        pojav_jni/ctxbridges/swap_interval_no_egl.c
-        pojav_jni/driver_helper/nsbypass.c
-        pojav_jni/driver_helper/hook.c
-        pojav_jni/jvm_hooks/lwjgl_dlopen_hook.c
-        pojav_jni/jvm_hooks/java_exec_hooks.c
-        pojav_jni/jvm_hooks/emui_iterator_fix_hook.c
-        pojav_jni/native_hooks/exit_hook.c
-        pojav_jni/native_hooks/chmod_hook.c
-        pojav_jni/native_hooks/resolvconf_hook.c
-        pojav_jni/jre_launcher.c
-)
+# ─────────────────────────────────────────────────────────────
+# 아래 4개는 ZalithLauncher2 의 native libs 사용 (jniLibs/arm64-v8a/)
+# 우리 CMake 빌드는 비활성화 — ZL2 patched LWJGL 3.3.6 과 ABI 일치 보장
+# ─────────────────────────────────────────────────────────────
 
-set(POJAV_INCLUDES
-        pojav_jni
-        pojav_jni/GL
-        pojav_jni/ctxbridges
-        pojav_jni/environ
-        pojav_jni/driver_helper
-        pojav_jni/jvm_hooks
-        pojav_jni/native_hooks
-        pojav_jni/awt_xawt
-)
-
-set(POJAV_WARN_FLAGS
-        -Wno-implicit-function-declaration
-        -Wno-incompatible-pointer-types
-        -Wno-int-conversion
-        -Wno-deprecated-declarations
-        -Wno-unused-parameter
-)
-
-# ── libglfw.so ────────────────────────────────────────────────
+#[[
+# libglfw.so — ZL2 의 libpojavexec.so 가 통합 제공
 add_library(glfw SHARED ${POJAV_SOURCES})
 target_include_directories(glfw PRIVATE ${POJAV_INCLUDES})
 target_compile_options(glfw PRIVATE ${POJAV_WARN_FLAGS})
 target_link_libraries(glfw
-        ${log-lib}
-        ${EGL-lib}
-        ${GLESv2-lib}
-        ${android-lib}
-        ${dl-lib}
+        ${log-lib} ${EGL-lib} ${GLESv2-lib} ${android-lib} ${dl-lib}
         bytehook::bytehook
 )
 
-# ── libpojavexec.so ──────────────────────────────────────────
+# libpojavexec.so — ZL2 의 것 사용
 add_library(pojavexec SHARED ${POJAV_SOURCES})
 target_include_directories(pojavexec PRIVATE ${POJAV_INCLUDES})
 target_compile_options(pojavexec PRIVATE ${POJAV_WARN_FLAGS})
 target_link_libraries(pojavexec
-        ${log-lib}
-        ${EGL-lib}
-        ${GLESv2-lib}
-        ${android-lib}
-        ${dl-lib}
+        ${log-lib} ${EGL-lib} ${GLESv2-lib} ${android-lib} ${dl-lib}
         bytehook::bytehook
 )
 
-# ── libawt_xawt.so ────────────────────────────────────────────
-# JRE 의 libfontmanager.so 가 SONAME 으로 libawt_xawt.so 를 찾고
-# 그 안에서 X11FontScaler 심볼 (AWTFreeChar 등 17개) 을 resolve 하려고 한다.
-# JRE 자체의 libawt_xawt.so 에는 이 심볼이 없으므로,
-# xawt_fake.c 의 노옵 스텁을 담은 우리 버전을 APK 에 같이 패키징해서
-# JRE 버전보다 먼저 로드하면 SONAME 중복으로 우리 것이 우선된다.
-add_library(awt_xawt SHARED
-        pojav_jni/awt_xawt/xawt_fake.c
-)
+# libawt_xawt.so — ZL2 의 것 사용
+add_library(awt_xawt SHARED pojav_jni/awt_xawt/xawt_fake.c)
 target_include_directories(awt_xawt PRIVATE ${POJAV_INCLUDES})
 target_compile_options(awt_xawt PRIVATE ${POJAV_WARN_FLAGS})
 target_link_libraries(awt_xawt
-        ${log-lib}
-        ${android-lib}
-        ${dl-lib}
+        ${log-lib} ${android-lib} ${dl-lib}
 )
 
-# ── libpojavexec_awt.so (AWT/Cacio 브릿지 분리) ───────────────
-# awt_bridge.c 의 JNI_OnLoad 가 input_bridge_v3.c 의 것과 충돌하므로
-# PojavLauncher 본가처럼 별도 .so 로 분리한다.
-# MinecraftActivity 가 jre lib 디렉토리에 이 이름으로 복사하고 있음.
-add_library(pojavexec_awt SHARED
-        pojav_jni/awt_bridge.c
-)
+# libpojavexec_awt.so — ZL2 의 것 사용
+add_library(pojavexec_awt SHARED pojav_jni/awt_bridge.c)
 target_include_directories(pojavexec_awt PRIVATE ${POJAV_INCLUDES})
 target_compile_options(pojavexec_awt PRIVATE ${POJAV_WARN_FLAGS})
 target_link_libraries(pojavexec_awt
-        ${log-lib}
-        ${android-lib}
-        ${dl-lib}
+        ${log-lib} ${android-lib} ${dl-lib}
 )
+]]

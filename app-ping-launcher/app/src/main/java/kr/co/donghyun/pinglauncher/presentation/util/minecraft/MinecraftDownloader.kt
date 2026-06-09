@@ -47,8 +47,10 @@ class MinecraftDownloader(
         val artifacts = manifest.libraries.mapNotNull { lib ->
             lib.downloads.artifact?.let { lib to it }
         }
+
         artifacts.forEachIndexed { index, (lib, artifact) ->
-            val path = getLibraryPath(lib.name)
+            val (effName, effUrl) = downgradeLwjgl(lib.name, artifact.url)
+            val path = getLibraryPath(effName)
             val libFile = File(librariesDir, path)
             onProgress(DownloadProgress(
                 phase = DownloadPhase.DOWNLOADING_LIBRARIES,
@@ -56,7 +58,9 @@ class MinecraftDownloader(
                 total = artifacts.size,
                 fileName = libFile.name
             ))
-            downloadFile(artifact.url, libFile, artifact.sha1)
+            // SHA1 은 다운그레이드된 jar 라 다름 → null 전달 (어차피 downloadFile 이 검증 안 함)
+            val effSha1 = if (effName != lib.name) null else artifact.sha1
+            downloadFile(effUrl, libFile, effSha1)
         }
 
         // 에셋 오브젝트
@@ -91,6 +95,33 @@ class MinecraftDownloader(
                 FileOutputStream(destFile).use { input.copyTo(it) }
             }
         }
+    }
+
+    /**
+     * MC 26.x 가 요구하는 LWJGL 3.4.x 를 ZL2 patched 3.3.6 과 호환되도록 다운그레이드.
+     * org.lwjgl:* 의 :3.4.x 만 :3.3.6 으로 rewrite.
+     */
+    private fun downgradeLwjgl(name: String, artifactUrl: String): Pair<String, String> {
+        val parts = name.split(":")
+        if (parts.size != 3) return name to artifactUrl
+        val (group, artifact, version) = parts
+        if (group != "org.lwjgl") return name to artifactUrl
+        if (!version.startsWith("3.4")) return name to artifactUrl
+
+        val newVersion = "3.3.6"
+        val newName = "$group:$artifact:$newVersion"
+
+        // Mojang mirror 가 LWJGL 3.3.6 안 가지고 있을 수 있으니 Maven Central 로 강제 전환
+        val newUrl = artifactUrl
+            .replace("/$version/", "/$newVersion/")
+            .replace("-$version.jar", "-$newVersion.jar")
+            .replace(
+                "https://libraries.minecraft.net/",
+                "https://repo1.maven.org/maven2/"
+            )
+
+        Log.i("PING_LAUNCHER", "🔄 LWJGL downgrade: $name → $newName")
+        return newName to newUrl
     }
 
     private fun downloadAssets(assetIndexFile: File, objectsDir: File) {

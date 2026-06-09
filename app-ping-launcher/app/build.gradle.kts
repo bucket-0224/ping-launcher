@@ -131,11 +131,11 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
 
-    // PojavLauncher patched LWJGL (컴파일 시점에만 클래스 참조용)
-    compileOnly(files("src/main/assets/lwjgl3/lwjgl-glfw-classes-3.3.6.jar"))
 
     // ── bytehook (native_hooks/exit_hook.c, chmod_hook.c 가 dlopen 으로 사용) ──
     implementation(libs.bytehook)
+
+    compileOnly(files("src/main/assets/lwjgl3/lwjgl-glfw-classes.jar"))
 
     implementation(libs.okhttp)
     implementation(libs.gson)

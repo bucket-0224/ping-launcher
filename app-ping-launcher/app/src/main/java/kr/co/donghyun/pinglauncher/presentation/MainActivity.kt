@@ -228,9 +228,9 @@ class MainActivity : BaseActivity() {
     }
 
     private fun copyLwjglJarFromAssets(baseDir: File) {
-        val dest = File(baseDir, "lwjgl3/lwjgl-glfw-classes-3.3.6.jar")
+        val dest = File(baseDir, "lwjgl3/lwjgl-glfw-classes.jar")
         dest.parentFile?.mkdirs()
-        assets.open("lwjgl3/lwjgl-glfw-classes-3.3.6.jar").use { input ->
+        assets.open("lwjgl3/lwjgl-glfw-classes.jar").use { input ->
             dest.outputStream().use { input.copyTo(it) }
         }
     }

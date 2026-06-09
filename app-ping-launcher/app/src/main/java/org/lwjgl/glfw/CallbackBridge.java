@@ -75,6 +75,10 @@ public class CallbackBridge {
         }
     }
 
+    public static void onCursorShapeChanged(int shape) {
+        // ZL2 cursor shape 변경 콜백 — Android 측에선 cursor shape 처리 없으므로 noop
+    }
+
     /** 컨트롤러 direct input 활성화 요청. 미지원이라 no-op. */
     public static void onDirectInputEnable() {
         Log.d(TAG, "onDirectInputEnable (no-op)");
