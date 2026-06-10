@@ -24,6 +24,25 @@ enum class Renderer(
         emoji = "📱",
         extraEnv = mapOf()
     ),
+    LTW(
+        id = "ltw",
+        displayName = "LTW (Desktop GL 4.x)",
+        description = "LWJGL Tinker Wrapper. GLSL 150+ 셰이더 직접 컴파일. " +
+                "Vulkan 없이도 동작. 한국 RPG 마인팜처럼 셰이더 강제 서버에 추천. 1.17+ 권장.",
+        pojavRenderer = "ltw",
+        libglName = "libltw.so",
+        libglString = "VulkanGL",
+        libglEs = "3",
+        emoji = "🚀",
+        extraEnv = mapOf(
+            "LIBGL_ES" to "3",
+            "POJAV_RENDERER" to "ltw",           // ★ 동일하게 통일
+            "DLOPEN" to "libltw.so",
+            "LIBGL_MIPMAP" to "3",
+            "LIBGL_NORMALIZE" to "1",
+            "LIBGL_VSYNC" to "1"
+        )
+    ),
 //    ZINK(
 //        id = "zink",
 //        displayName = "Zink (Vulkan)",
