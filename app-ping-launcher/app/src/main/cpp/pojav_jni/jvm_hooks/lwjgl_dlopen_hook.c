@@ -60,12 +60,26 @@ static jlong ndlsym_hook(__attribute__((unused)) JNIEnv *env,
     const char* name = (const char*)(uintptr_t)name_ptr;
     void* result = dlsym(handle, name);
 
-    if (result != NULL && name != NULL
-        && real_glGetString != NULL
+    LOGI("ndlsym_hook: name=\"%s\" handle=%p result=%p",
+         name ? name : "(null)", handle, result);
+
+    if (name == NULL) {
+        return (jlong)(uintptr_t)result;
+    }
+
+    // OSMesaGetProcAddress redirect — LWJGL이 이걸로 glGetString lookup하니까
+    if (result != NULL && strcmp(name, "OSMesaGetProcAddress") == 0) {
+        LOGI("ndlsym_hook: redirect OSMesaGetProcAddress -> wrapped_OSMesaGetProcAddress");
+        return (jlong)(uintptr_t)wrapped_OSMesaGetProcAddress;
+    }
+
+    // 직접 ndlsym("glGetString") 케이스도 커버 (LWJGL이 fallback할 때)
+    if (result != NULL && real_glGetString != NULL
         && strcmp(name, "glGetString") == 0) {
         LOGI("LWJGL ndlsym: redirect glGetString -> wrapped_glGetString (raw=%p)", result);
         return (jlong)(uintptr_t)wrapped_glGetString;
     }
+
     return (jlong)(uintptr_t)result;
 }
 
@@ -80,12 +94,22 @@ void installLwjglDlopenHook(JNIEnv *env) {
         (*env)->ExceptionClear(env);
         return;
     }
-    JNINativeMethod methods[] = {
-            {"ndlopen", "(JI)J", &ndlopen_bugfix},
+    JNINativeMethod ndlopenMethod[] = {
+            {"ndlopen", "(JI)J", &ndlopen_bugfix}
+    };
+    if((*env)->RegisterNatives(env, dynamicLinkLoader, ndlopenMethod, 1) != 0) {
+        LOGE("Failed to register ndlopen hook");
+        (*env)->ExceptionClear(env);
+    } else {
+        LOGI("Registered ndlopen hook OK");
+    }
+    JNINativeMethod ndlsymMethod[] = {
             {"ndlsym",  "(JJ)J", &ndlsym_hook}
     };
-    if((*env)->RegisterNatives(env, dynamicLinkLoader, methods, 2) != 0) {
-        LOGE("Failed to register the hooked method");
+    if((*env)->RegisterNatives(env, dynamicLinkLoader, ndlsymMethod, 1) != 0) {
+        LOGE("Failed to register ndlsym hook -- signature mismatch?");
         (*env)->ExceptionClear(env);
+    } else {
+        LOGI("Registered ndlsym hook OK");
     }
 }

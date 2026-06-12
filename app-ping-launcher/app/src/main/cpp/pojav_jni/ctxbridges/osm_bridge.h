@@ -27,6 +27,7 @@ void osm_setup_window();
 void osm_swap_interval(int swapInterval);
 // Cross-thread glGetString wrapper for LWJGL
 extern const GLubyte* (*real_glGetString)(GLenum name);
+void* wrapped_OSMesaGetProcAddress(const char* funcName);
 const GLubyte* wrapped_glGetString(GLenum name);
 
 #endif //POJAVLAUNCHER_OSM_BRIDGE_H

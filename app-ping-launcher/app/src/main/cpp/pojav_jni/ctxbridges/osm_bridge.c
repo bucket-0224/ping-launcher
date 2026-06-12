@@ -116,6 +116,15 @@ void osm_apply_current_ll() {
     }
 }
 
+void* wrapped_OSMesaGetProcAddress(const char* funcName) {
+    void* real = OSMesaGetProcAddress_p ? OSMesaGetProcAddress_p(funcName) : NULL;
+    if (real != NULL && funcName != NULL && strcmp(funcName, "glGetString") == 0) {
+        LOGI("wrapped_OSMesaGetProcAddress: redirect glGetString -> wrapped_glGetString (raw=%p)", real);
+        return (void*)wrapped_glGetString;
+    }
+    return real;
+}
+
 const GLubyte* wrapped_glGetString(GLenum name) {
     if (OSMesaGetCurrentContext_p && OSMesaGetCurrentContext_p() == NULL
         && currentBundle != NULL) {
