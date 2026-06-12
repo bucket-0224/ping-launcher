@@ -7,16 +7,23 @@
 #include "osm_bridge.h"
 #define TAG __FILE_NAME__
 #include <log.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#define gettid() ((pid_t)syscall(SYS_gettid))
 
-static __thread osm_render_window_t* currentBundle;
+static osm_render_window_t* currentBundle;
+
 // a tiny buffer for rendering when there's nowhere t render
 static char no_render_buffer[16 * 16 * 4] __attribute__((aligned(16)));
+const GLubyte* (*real_glGetString)(GLenum name) = NULL;
 
 // Its not in a .h file because it is not supposed to be used outsife of this file.
 void setNativeWindowSwapInterval(struct ANativeWindow* nativeWindow, int swapInterval);
 
 bool osm_init() {
     if(!dlsym_OSMesa()) return false;
+    real_glGetString = (const GLubyte* (*)(GLenum)) OSMesaGetProcAddress_p("glGetString");
+    LOGI("osm_init: real_glGetString=%p", (void*)real_glGetString);
     return true;
 }
 
@@ -38,6 +45,9 @@ osm_render_window_t* osm_init_context(osm_render_window_t* share) {
     render_window->context = context;
     return render_window;
 }
+
+
+
 
 void osm_set_no_render_buffer(ANativeWindow_Buffer* buffer) {
     buffer->bits = &no_render_buffer;
@@ -86,9 +96,38 @@ void osm_apply_current_ll() {
     if(buffer->stride != currentBundle->last_stride)
         OSMesaPixelStore_p(OSMESA_ROW_LENGTH, buffer->stride);
     currentBundle->last_stride = buffer->stride;
+
+    if (OSMesaGetProcAddress_p) {
+        const char* (*gs)(unsigned int) =
+        (const char*(*)(unsigned int)) OSMesaGetProcAddress_p("glGetString");
+        if (gs) {
+            const char* ver      = gs(0x1F02); // GL_VERSION
+            const char* vendor   = gs(0x1F00); // GL_VENDOR
+            const char* renderer = gs(0x1F01); // GL_RENDERER
+            LOGI("  [diag] GL_VERSION=%s VENDOR=%s RENDERER=%s",
+                 ver      ? ver      : "(NULL)",
+                 vendor   ? vendor   : "(NULL)",
+                 renderer ? renderer : "(NULL)");
+        } else {
+            LOGI("  [diag] OSMesaGetProcAddress(\"glGetString\") returned NULL");
+        }
+    } else {
+        LOGI("  [diag] OSMesaGetProcAddress_p is NULL");
+    }
+}
+
+const GLubyte* wrapped_glGetString(GLenum name) {
+    if (OSMesaGetCurrentContext_p && OSMesaGetCurrentContext_p() == NULL
+        && currentBundle != NULL) {
+        LOGI("wrapped_glGetString: rebinding OSMesa to tid=%d (name=0x%x)", gettid(), name);
+        osm_apply_current_ll();
+    }
+    return real_glGetString ? real_glGetString(name) : NULL;
 }
 
 void osm_make_current(osm_render_window_t* bundle) {
+    LOGI("osm_make_current ENTER: tid=%d bundle=%p", gettid(), bundle);
+
     if(bundle == NULL) {
         //technically this does nothing as its not possible to unbind a context in OSMesa
         OSMesaMakeCurrent_p(NULL, NULL, 0, 0, 0);

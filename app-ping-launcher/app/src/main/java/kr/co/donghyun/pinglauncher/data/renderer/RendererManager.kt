@@ -34,8 +34,6 @@ enum class Renderer(
         libglEs = "3",
         emoji = "🌋",
         extraEnv = mapOf(
-            "MESA_GL_VERSION_OVERRIDE" to "4.6",
-            "MESA_GLSL_VERSION_OVERRIDE" to "460",
             "force_glsl_extensions_warn" to "true",
             "allow_higher_compat_version" to "true",
             "allow_glsl_extension_directive_midshader" to "true",

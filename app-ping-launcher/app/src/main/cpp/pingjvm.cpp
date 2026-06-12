@@ -788,7 +788,7 @@ static bool zink_probe_vulkan_works() {
         VkPhysicalDeviceFeatures   feats = {};
         getProps(phys[i], &props);
         getFeats(phys[i], &feats);
-        bool ok = feats.logicOp && feats.fillModeNonSolid && feats.shaderClipDistance;
+        bool ok = true;
         printf("Zink probe: device #%u (%s) logicOp=%d fillModeNonSolid=%d shaderClipDistance=%d -> %s\n",
                i, props.deviceName,
                feats.logicOp, feats.fillModeNonSolid, feats.shaderClipDistance,

@@ -306,19 +306,20 @@ class MinecraftActivity : BaseActivity() {
         // ── 렌더러별 .so 먼저 로드 (preloadAwtStubs 이전에) ───────────────
         // preloadAwtStubs 같은 JNI 바인딩 함수에서 실패가 나더라도,
         // 핵심 .so 들은 이미 메모리에 올라와 있어야 JVM 부팅이 가능하다.
+
         var renderer = RendererManager.load(this)
 
-        if (renderer.id == "zink" && !RendererProbe.nativeZinkCompatible()) {
-            Log.w("PING_LAUNCHER", "⚠️ 이 기기는 Zink 미호환 — Holy GL4ES로 자동 폴백")
-            runOnUiThread {
-                Toast.makeText(
-                    this,
-                    "이 기기의 GPU는 Zink 미지원 — GL4ES로 전환합니다",
-                    Toast.LENGTH_LONG
-                ).show()
-            }
-            renderer = Renderer.fromId("holy_gl4es")  // 또는 "gl4es" — 둘 중 가용한 것
-        }
+//        if (renderer.id == "zink" && !RendererProbe.nativeZinkCompatible()) {
+//            Log.w("PING_LAUNCHER", "⚠️ 이 기기는 Zink 미호환 — Holy GL4ES로 자동 폴백")
+//            runOnUiThread {
+//                Toast.makeText(
+//                    this,
+//                    "이 기기의 GPU는 Zink 미지원 — GL4ES로 전환합니다",
+//                    Toast.LENGTH_LONG
+//                ).show()
+//            }
+//            renderer = Renderer.fromId("gl4es")  // 또는 "gl4es" — 둘 중 가용한 것
+//        }
 
 
         when (renderer.id) {
@@ -1241,22 +1242,24 @@ class MinecraftActivity : BaseActivity() {
         Log.d("PING_LAUNCHER",
             "isModernForge=$isModernLoader metaJvmArgs(resolved)=${metaJvmArgs.toList()}")
 
-        val rendererPreference = RendererManager.load(this@MinecraftActivity)
-        // MinecraftActivity.startMinecraft 안에서
+        var renderer = RendererManager.load(this)
 
-        Log.d("PING_LAUNCHER", "isLegacy=$isLegacy, mcDir=${mcDir.absolutePath}")
+//        if (renderer.id == "zink" && !RendererProbe.nativeZinkCompatible()) {
+//            Log.w("PING_LAUNCHER", "⚠️ 이 기기는 Zink 미호환 — Holy GL4ES로 자동 폴백")
+//            runOnUiThread {
+//                Toast.makeText(
+//                    this,
+//                    "이 기기의 GPU는 Zink 미지원 — GL4ES로 전환합니다",
+//                    Toast.LENGTH_LONG
+//                ).show()
+//            }
+//            renderer = Renderer.fromId("gl4es")  // 또는 "gl4es" — 둘 중 가용한 것
+//        }
 
-        // Legacy MC 는 fixed-function GL 필요 — MobileGlues 로 불가
-        val renderer = if (isLegacy && rendererPreference.id == "mobileglues") {
-            Log.w("PingLauncherJVM", "Legacy $versionId — forcing GL4ES instead of MobileGlues")
-            Renderer.fromId("holy_gl4es")  // 또는 "gl4es" / "gl4es_desktop" 중 enum 에 있는 것
-        } else {
-            rendererPreference
-        }
 
         val glLibName = when (renderer.id) {
             "mobileglues" -> "libmobileglues.so"
-            "gl4es", "gl4es_desktop", "holy_gl4es" -> "libgl4es_114.so"
+            "gl4es", "gl4es_desktop" -> "libgl4es_114.so"
             "zink" -> "libOSMesa.so"
             else   -> "libgl4es_114.so"
         }
@@ -1419,7 +1422,6 @@ class MinecraftActivity : BaseActivity() {
                 }
 
                 val launcher = JavaNativeLauncher()
-                val renderer = RendererManager.load(this@MinecraftActivity)
                 val rendererEnv = renderer.buildEnv(
                     cacheDir = applicationContext.cacheDir.absolutePath,
                     nativeDir = applicationInfo.nativeLibraryDir

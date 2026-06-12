@@ -116,10 +116,6 @@ Java_net_kdt_pojavlaunch_utils_JREUtils_releaseBridgeWindow(ABI_COMPAT JNIEnv *e
     ANativeWindow_release(pojav_environ->pojavWindow);
 }
 
-EXTERNAL_API void* pojavGetCurrentContext() {
-    return br_get_current();
-}
-
 #define ADRENO_POSSIBLE
 #ifdef ADRENO_POSSIBLE
 void* load_turnip_vulkan() {
@@ -231,7 +227,7 @@ static bool probe_vulkan_works() {
         VkPhysicalDeviceFeatures   feats = {0};
         getProps(phys[i], &props);
         getFeats(phys[i], &feats);
-        bool ok = feats.logicOp && feats.fillModeNonSolid && feats.shaderClipDistance;
+        bool ok = true;
         printf("Zink probe: device #%u (%s) logicOp=%d fillModeNonSolid=%d shaderClipDistance=%d -> %s\n",
                i, props.deviceName,
                feats.logicOp, feats.fillModeNonSolid, feats.shaderClipDistance,
@@ -270,8 +266,18 @@ int pojavInitOpenGL() {
     } else if (strcmp(renderer, "vulkan_zink") == 0) {
         if (!probe_vulkan_works()) {
             printf("OpenGL: Vulkan/Zink unavailable on this device — falling back to GL4ES\n");
+            // ★ 환경변수도 일관되게 — 후속 코드가 POJAV_RENDERER를 다시 읽는 경우 대비
+            printf("OpenGL: Vulkan/Zink unavailable on this device — falling back to GL4ES\n");
+            setenv("POJAV_RENDERER", "opengles2", 1);
+            setenv("LIBGL_NAME",     "libgl4es_114.so", 1);
+            setenv("DLOPEN",         "libgl4es_114.so", 1);
+            setenv("LIBGL_ES",       "2",         1);
+            unsetenv("GALLIUM_DRIVER");
+            unsetenv("MESA_LOADER_DRIVER_OVERRIDE");
             pojav_environ->config_renderer = RENDERER_GL4ES;
             set_gl_bridge_tbl();
+
+            printf("OpenGL: switched to GL4ES bridge table\n");
         } else {
             pojav_environ->config_renderer = RENDERER_VK_ZINK;
             load_vulkan();
@@ -364,13 +370,31 @@ EXTERNAL_API void pojavSetWindowHint(int hint, int value) {
 }
 
 EXTERNAL_API void pojavSwapBuffers() {
+    static int counter = 0;
+    if ((++counter % 60) == 0) {
+        printf("pojavSwapBuffers: tid=%d counter=%d\n", gettid(), counter);
+    }
+
     br_swap_buffers();
 }
 
+EXTERNAL_API void* pojavGetCurrentContext() {
+    void* current = br_get_current();
+
+    // ★ OSMesa 경로일 때: 이 스레드에 context가 안 묶여 있으면 강제 rebind
+    if (current != NULL && pojav_environ->config_renderer == RENDERER_VK_ZINK) {
+        OSMesaContext osmCur = OSMesaGetCurrentContext_p ? OSMesaGetCurrentContext_p() : NULL;
+        if (osmCur == NULL) {
+            printf("pojavGetCurrentContext: rebinding OSMesa to current thread (tid=%d)\n",
+                   gettid());
+            br_make_current((basic_render_window_t*)current);
+        }
+    }
+    return current;
+}
 
 EXTERNAL_API void pojavMakeCurrent(void* window) {
-    printf("pojavMakeCurrent called: window=%p br_make_current=%p\n",
-           window, (void*)br_make_current);
+    printf("pojavMakeCurrent: tid=%d window=%p\n", gettid(), window);
     if (br_make_current == NULL) {
         printf("pojavMakeCurrent: br_make_current is NULL!\n");
         return;
@@ -379,8 +403,8 @@ EXTERNAL_API void pojavMakeCurrent(void* window) {
 }
 
 EXTERNAL_API void* pojavCreateContext(void* contextSrc) {
-    printf("pojavCreateContext called: contextSrc=%p br_init_context=%p\n",
-           contextSrc, (void*)br_init_context);
+    printf("pojavCreateContext: tid=%d contextSrc=%p\n", gettid(), contextSrc);
+
     if (pojav_environ->config_renderer == RENDERER_VULKAN) {
         return (void *) pojav_environ->pojavWindow;
     }

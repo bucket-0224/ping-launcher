@@ -14,6 +14,8 @@
 
 #define TAG __FILE_NAME__
 #include <log.h>
+#include "ctxbridges/osm_bridge.h"
+
 
 extern void* maybe_load_vulkan();
 
@@ -47,6 +49,27 @@ static jlong ndlopen_bugfix(__attribute__((unused)) JNIEnv *env,
 }
 
 /**
+ * ndlsym hook — needed to redirect glGetString to our cross-thread wrapper
+ * when OSMesa (Zink) is the active renderer. Without this LWJGL's
+ * GL.createCapabilities() may run on a thread without OSMesa context bound.
+ */
+static jlong ndlsym_hook(__attribute__((unused)) JNIEnv *env,
+                         __attribute__((unused)) jclass class,
+                         jlong handle_ptr, jlong name_ptr) {
+    void* handle = (void*)(uintptr_t)handle_ptr;
+    const char* name = (const char*)(uintptr_t)name_ptr;
+    void* result = dlsym(handle, name);
+
+    if (result != NULL && name != NULL
+        && real_glGetString != NULL
+        && strcmp(name, "glGetString") == 0) {
+        LOGI("LWJGL ndlsym: redirect glGetString -> wrapped_glGetString (raw=%p)", result);
+        return (jlong)(uintptr_t)wrapped_glGetString;
+    }
+    return (jlong)(uintptr_t)result;
+}
+
+/**
  * Install the LWJGL dlopen hook. This allows us to mitigate linker bugs and add custom library overrides.
  */
 void installLwjglDlopenHook(JNIEnv *env) {
@@ -57,10 +80,11 @@ void installLwjglDlopenHook(JNIEnv *env) {
         (*env)->ExceptionClear(env);
         return;
     }
-    JNINativeMethod ndlopenMethod[] = {
-            {"ndlopen", "(JI)J", &ndlopen_bugfix}
+    JNINativeMethod methods[] = {
+            {"ndlopen", "(JI)J", &ndlopen_bugfix},
+            {"ndlsym",  "(JJ)J", &ndlsym_hook}
     };
-    if((*env)->RegisterNatives(env, dynamicLinkLoader, ndlopenMethod, 1) != 0) {
+    if((*env)->RegisterNatives(env, dynamicLinkLoader, methods, 2) != 0) {
         LOGE("Failed to register the hooked method");
         (*env)->ExceptionClear(env);
     }
