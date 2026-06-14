@@ -1551,8 +1551,8 @@ class MinecraftActivity : BaseActivity() {
         // 물리 키보드 / 외장 키보드만 가로채기
         // (소프트 IME 는 deviceId == -1 또는 KeyCharacterMap.VIRTUAL_KEYBOARD)
         val isPhysical =
-                (event.source and InputDevice.SOURCE_KEYBOARD) != 0 &&
-                event.deviceId != android.view.KeyCharacterMap.VIRTUAL_KEYBOARD
+            (event.source and InputDevice.SOURCE_KEYBOARD) != 0 &&
+                    event.deviceId != android.view.KeyCharacterMap.VIRTUAL_KEYBOARD
 
         if (!isPhysical) return false
 
