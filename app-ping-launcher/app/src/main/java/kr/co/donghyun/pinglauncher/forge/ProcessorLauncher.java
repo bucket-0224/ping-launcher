@@ -134,11 +134,12 @@ public final class ProcessorLauncher {
             }
         }
 
-        log("All processors complete. Launching " + realMainClass);
+        log("All processors complete.");
 
-        Class<?> mainCls = Class.forName(realMainClass, true, ClassLoader.getSystemClassLoader());
-        Method mainMethod = mainCls.getMethod("main", String[].class);
-        mainMethod.invoke(null, (Object) args);
+        log("Invoking " + realMainClass + ".main(...)");
+        Class<?> mainCls = Class.forName(realMainClass);
+        Method m = mainCls.getMethod("main", String[].class);
+        m.invoke(null, (Object) args);
     }
 
     private static void runProcessor(String jarPath, String[] classpath, String[] args) throws Throwable {

@@ -1044,7 +1044,13 @@ class MinecraftActivity : BaseActivity() {
                         val gameLayerOnly = n.contains("-srg.")
                                 || n.contains("-slim.")
                                 || n.contains("-srg-and-extra.")
-                        if (gameLayerOnly) {
+                                || n.contains("-extra.")
+
+                        val vanillaClient = n.startsWith("client-")
+                                && !gameLayerOnly
+                                && f.absolutePath.contains("/net/minecraft/client/")
+
+                        if (gameLayerOnly || vanillaClient) {
                             Log.d("PING_LAUNCHER", "🚫 modern Forge/NeoForge — game-layer 전용 jar classpath 제외: ${f.name}")
                             return@forEach
                         }
@@ -1197,26 +1203,58 @@ class MinecraftActivity : BaseActivity() {
                     .replace("\${natives_directory}",   nativesDir.absolutePath)
             }
 
-// ── BootstrapLauncher 의 -DignoreList 에 LWJGL 들 추가 ──
-//   PojavLauncher patched lwjgl-glfw-classes.jar 는 다른 LWJGL 서브모듈(openal, opengl 등)
-//   클래스도 통합 포함되어 있어서 자동 모듈로 잡히면 split package 충돌 발생.
-//   ignoreList 에 prefix 매칭시키면 classpath unnamed module 로 남아 충돌 회피.
         val metaJvmArgs: Array<String> = metaJvmArgsRaw.map { arg ->
             if (isModernLoader && arg.startsWith("-DignoreList=")) {
-                // 이미 들어있는지 확인 후 없으면 추가. lwjgl 한 prefix 로 lwjgl-glfw-classes,
-                // lwjgl-openal, lwjgl-opengl, lwjgl-stb 등 한 번에 커버.
-                val needed = listOf(
+                val needed = mutableListOf(
+                    // 빌드 입력 processor 도구들
                     "ForgeAutoRenamingTool", "BinaryPatcher", "binarypatcher",
-                    "jarsplitter", "installertools", "vignette", "DiffPatch", "diffpatch"
-                ).filterNot { arg.contains(",$it") || arg.endsWith("=$it") }
+                    "jarsplitter", "installertools", "vignette", "DiffPatch", "diffpatch",
 
-                if (needed.isNotEmpty()) {
-                    val patched = arg + "," + needed.joinToString(",")
-                    Log.d("PING_LAUNCHER", "🩹 ignoreList 보강: +${needed.joinToString(",")}")
-                    patched
-                } else arg
+                    // ★ 짧은 토큰 — BootstrapLauncher 가 버전 stripping 후 매칭하는 경우
+                    "client-srg", "client-slim", "client-extra", "client-srg-and-extra",
+                    "neoforge-client"
+                )
+
+                // ★ 긴 토큰 — BootstraplLauncher 가 literal startsWith 매칭하는 경우
+                //   net.minecraft.client 의 모든 client-* jar 파일명 (확장자 제외)
+                searchDirs.forEach { dir ->
+                    val mcClientDir = File(dir, "libraries/net/minecraft/client")
+                    if (!mcClientDir.exists()) return@forEach
+                    mcClientDir.walkTopDown().forEach { f ->
+                        if (!f.isFile || f.extension != "jar") return@forEach
+                        if (f.name.startsWith("client-")) {
+                            needed.add(f.nameWithoutExtension)
+                        }
+                    }
+                }
+
+                // ★ 긴 토큰 — neoforge-VERSION-client.jar (universal 은 net.minecraft 클래스 0개라 무해)
+                searchDirs.forEach { dir ->
+                    val nfDir = File(dir, "libraries/net/neoforged/neoforge")
+                    if (!nfDir.exists()) return@forEach
+                    nfDir.walkTopDown().forEach { f ->
+                        if (!f.isFile || f.extension != "jar") return@forEach
+                        if (f.name.startsWith("neoforge-") && f.name.endsWith("-client.jar")) {
+                            needed.add(f.nameWithoutExtension)
+                        }
+                    }
+                }
+
+                // 기존 arg 에 이미 있는 토큰은 중복 안 넣기
+                val final = needed.distinct().filterNot { tok ->
+                    arg.contains(",$tok,") || arg.contains(",$tok") ||
+                            arg.endsWith(",$tok") || arg.endsWith("=$tok") ||
+                            arg.contains("=$tok,")
+                }
+                if (final.isEmpty()) return@map arg
+
+                val patched = arg + "," + final.joinToString(",")
+                Log.d("PING_LAUNCHER", "🩹 ignoreList 보강 (${final.size}개):")
+                final.forEach { Log.d("PING_LAUNCHER", "  + $it") }
+                patched
             } else arg
         }.toTypedArray()
+
 
 // ── Modern Forge fallback: 모듈 안 로드돼도 reflection 통과시키는 ALL-UNNAMED opens ──
         val modernForgeArgs: Array<String> = if (isModularJre && isModernLoader) {
@@ -1231,6 +1269,7 @@ class MinecraftActivity : BaseActivity() {
                 "--add-exports", "java.base/sun.security.util=ALL-UNNAMED",
             )
         } else emptyArray()
+
 
         Log.d("PING_LAUNCHER",
             "isModernForge=$isModernLoader metaJvmArgs(resolved)=${metaJvmArgs.toList()}")
@@ -1314,7 +1353,38 @@ class MinecraftActivity : BaseActivity() {
         if (dedupedJars.size != originalSize) {
             Log.d("PING_LAUNCHER", "📦 classpath dedupe total: $originalSize → ${dedupedJars.size}")
         }
+
         val classPathStr = dedupedJars.joinToString(File.pathSeparator)
+
+        // (기존 dedupedJars / classPathStr 계산 끝난 다음, jvmArgs 합성 전)
+
+// ★ Modern Forge/NeoForge: game-layer 전용 jar (SRG/slim/extra) 를 별도 수집
+        val gameLayerJars = mutableListOf<String>()
+        if (isModernLoader) {
+            searchDirs.forEach { dir ->
+                val librariesDir = File(dir, "libraries")
+                if (!librariesDir.exists()) return@forEach
+                librariesDir.walkTopDown().forEach { f ->
+                    if (!f.isFile || f.extension != "jar") return@forEach
+                    if (!f.absolutePath.contains("/net/minecraft/")) return@forEach
+                    val n = f.name
+                    if (n.contains("-srg.") || n.contains("-srg-and-extra.") || n.contains("-extra.")) {
+                        gameLayerJars.add(f.absolutePath)
+                        Log.d("PING_LAUNCHER", "🎯 game-layer jar 수집: ${f.name}")
+                    }
+                }
+            }
+        }
+
+// legacyClassPath = JVM 클래스패스 + 게임 레이어 전용 jar
+        val legacyCpStr = if (isModernLoader) {
+            (dedupedJars + gameLayerJars).joinToString(File.pathSeparator)
+        } else classPathStr
+
+        val legacyClassPathArgs: Array<String> = if (isModernLoader) {
+            Log.d("PING_LAUNCHER", "📦 legacyClassPath 항목 수: ${(dedupedJars + gameLayerJars).size}")
+            arrayOf("-DlegacyClassPath=$legacyCpStr")
+        } else emptyArray()
 
 
         val dnsArgs = arrayOf(
@@ -1341,7 +1411,8 @@ class MinecraftActivity : BaseActivity() {
                 dnsArgs +
                 launchWrapperArgs +
                 fabricJvmArgs +
-                modernForgeArgs +     // ★ 추가 — metaJvmArgs 보다 앞에 둬서 version.json 인자가 덮어쓰도록
+                modernForgeArgs +
+                legacyClassPathArgs + // ★ 추가 — metaJvmArgs 보다 앞에 둬서 version.json 인자가 덮어쓰도록
                 metaJvmArgs
 
         Log.d("PING_LAUNCHER", "버전: $versionId, mcDir: ${mcDir.absolutePath}, isFabric=$isFabric, javaMajor=$javaMajor")
@@ -1683,6 +1754,23 @@ class MinecraftActivity : BaseActivity() {
         optionsFile.writeText(existing.joinToString("\n"))
         Log.d("PING_LAUNCHER",
             "📝 options.txt sync: maxFps=$targetMaxFps vsync=$targetVsync renderDist=$targetRenderD")
+    }
+
+    /**
+     * NeoForge/Modern Forge 의 version.json jvm args 안에서 -p / --module-path 값을 추출.
+     * BootstrapLauncher 띄울 때 ModuleBootstrap 이 이 값을 ping.module.path 로 받아쓴다.
+     */
+    private fun extractModulePath(args: List<String>): String? {
+        var i = 0
+        while (i < args.size) {
+            val a = args[i]
+            when {
+                a.startsWith("--module-path=") -> return a.removePrefix("--module-path=")
+                a == "--module-path" || a == "-p" -> return args.getOrNull(i + 1)
+            }
+            i++
+        }
+        return null
     }
 
     fun androidKeyToGlfw(keyCode: Int): Int? = when (keyCode) {

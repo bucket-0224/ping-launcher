@@ -193,8 +193,14 @@ class ForgeInstaller(
                     mcVersion = mcVersion,
                     realMainClass = profile.mainClass
                 )
+
                 val launcherJar = copyProcessorLauncherJar(context = context, librariesDir = librariesDir)
                 jarList.add(0, launcherJar.absolutePath)   // classpath 맨 앞
+
+                // ★ ModuleBootstrap 도 classpath 에 — ProcessorLauncher 보다 더 앞에
+                val moduleBootJar = copyModuleBootstrapJar(context, librariesDir)
+                jarList.add(0, moduleBootJar.absolutePath)
+
                 effectiveMainClass = "kr.co.donghyun.pinglauncher.forge.ProcessorLauncher"
                 Log.i("PING_LAUNCHER", "✅ Forge processors 메타 준비 완료")
             } catch (e: Exception) {
@@ -518,14 +524,26 @@ class ForgeInstaller(
         }
     }
 
+
     /** assets/forge-runtime/processor-launcher.jar → instance/libraries/...  복사 */
     private fun copyProcessorLauncherJar(context : Context, librariesDir: File): File {
         val dest = File(librariesDir, "kr/co/donghyun/pinglauncher/processor-launcher/1.0/processor-launcher-1.0.jar")
         dest.parentFile?.mkdirs()
-        if (!dest.exists() || dest.length() == 0L) {
-            context.assets.open("forge-runtime/processor-launcher.jar").use { input ->
-                FileOutputStream(dest).use { input.copyTo(it) }
-            }
+
+        context.assets.open("forge-runtime/processor-launcher.jar").use { input ->
+            FileOutputStream(dest).use { input.copyTo(it) }
+        }
+        return dest
+    }
+
+    /** assets/forge-runtime/module-bootstrap.jar → instance/libraries/... 복사 */
+    private fun copyModuleBootstrapJar(context: Context, librariesDir: File): File {
+        val dest = File(librariesDir,
+            "kr/co/donghyun/pinglauncher/module-bootstrap/1.0/module-bootstrap-1.0.jar")
+        dest.parentFile?.mkdirs()
+
+        context.assets.open("forge-runtime/module-bootstrap.jar").use { input ->
+            FileOutputStream(dest).use { input.copyTo(it) }
         }
         return dest
     }
@@ -595,6 +613,13 @@ class ForgeInstaller(
         }
         props.insert(props.indexOf('\n') + 1, "processorCount=$outIdx\n")
 
+        // ★ Modern Forge / NeoForge 의 module bootstrap 정보
+        val moduleName = detectBootstrapModule(realMainClass)
+        if (moduleName != null) {
+            props.append("module.name=").append(moduleName).append('\n')
+            Log.d("PING_LAUNCHER", "🔧 Bootstrap module 직렬화: $moduleName")
+        }
+
         File(instanceDir, "forge-install-data.properties").writeText(props.toString(), Charsets.UTF_8)
     }
 
@@ -659,6 +684,15 @@ class ForgeInstaller(
         val version = parts[2]
         val classifier = if (parts.size > 3) "-${parts[3]}" else ""
         return File(librariesDir, "$group/$artifact/$version/$artifact-$version$classifier.$ext").absolutePath
+    }
+
+    /**
+     * BootstrapLauncher 의 mainClass 가 어느 named module 안에 있는지 매핑.
+     * 1.18+ Forge / NeoForge 전부 cpw.mods.bootstraplauncher 모듈에 들어있음.
+     */
+    private fun detectBootstrapModule(realMainClass: String): String? = when (realMainClass) {
+        "cpw.mods.bootstraplauncher.BootstrapLauncher" -> "cpw.mods.bootstraplauncher"
+        else -> null
     }
 
     private fun extractFromInstaller(installerFile: File, internalPath: String, instanceDir: File): String {
