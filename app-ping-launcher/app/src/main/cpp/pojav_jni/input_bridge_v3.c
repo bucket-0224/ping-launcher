@@ -25,6 +25,15 @@
 #include "environ/environ.h"
 #include "jvm_hooks/jvm_hooks.h"
 
+// 매 프레임/매 입력마다 도는 디버그 로그 토글 (0 = 끔 → 성능용, 1 = 켬 → 디버깅용)
+// LOGI는 동기 I/O라 매 프레임 호출 시 렌더 파이프라인을 직렬화시켜 fps를 크게 떨어뜨림.
+#define FRAME_SPAM_LOG 0
+#if FRAME_SPAM_LOG
+#define FLOGI(...) LOGI(__VA_ARGS__)
+#else
+#define FLOGI(...) ((void)0)
+#endif
+
 #define EVENT_TYPE_CHAR 1000
 #define EVENT_TYPE_CHAR_MODS 1001
 #define EVENT_TYPE_CURSOR_ENTER 1002
@@ -434,8 +443,8 @@ static void dispatchMouseButtonDirect(jint button, jint action, jint mods) {
 void pojavPumpEvents(void* window) {
     static int pump_counter = 0;
     if (++pump_counter % 60 == 0) {
-        LOGI("[PUMP] pojavPumpEvents tick #%d outIdx=%zu targetIdx=%zu",
-             pump_counter, pojav_environ->outEventIndex, pojav_environ->outTargetIndex);
+        FLOGI("[PUMP] pojavPumpEvents tick #%d outIdx=%zu targetIdx=%zu",
+              pump_counter, pojav_environ->outEventIndex, pojav_environ->outTargetIndex);
     }
 
     if(pojav_environ->shouldUpdateMouse) {
@@ -498,8 +507,8 @@ void pojavBootDispatchFramebufferSize(void) {
 void pojavStartPumping() {
     static int start_counter = 0;
     if (++start_counter % 60 == 0) {
-        LOGI("[PUMP] StartPumping tick #%d eventCounter=%zu",
-             start_counter, atomic_load_explicit(&pojav_environ->eventCounter, memory_order_acquire));
+        FLOGI("[PUMP] StartPumping tick #%d eventCounter=%zu",
+              start_counter, atomic_load_explicit(&pojav_environ->eventCounter, memory_order_acquire));
     }
 
     size_t counter = atomic_load_explicit(&pojav_environ->eventCounter, memory_order_acquire);
@@ -531,7 +540,7 @@ void pojavStartPumping() {
 void pojavStopPumping() {
     static int stop_counter = 0;
     if (++stop_counter % 60 == 0) {
-        LOGI("[PUMP] StopPumping tick #%d", stop_counter);
+        FLOGI("[PUMP] StopPumping tick #%d", stop_counter);
     }
 
     pojav_environ->outEventIndex = pojav_environ->outTargetIndex;
@@ -710,7 +719,7 @@ JNIEXPORT void JNICALL Java_org_lwjgl_glfw_CallbackBridge_nativeSendCursorEnter(
 */
 
 void critical_send_cursor_pos(jfloat x, jfloat y) {
-    LOGI("[DIAG] critical_send_cp: x=%.0f y=%.0f savedW=%d savedH=%d invoke=%p ready=%d enter_invoke=%p entered=%d", x, y, pojav_environ->savedWidth, pojav_environ->savedHeight, (void*)pojav_environ->GLFW_invoke_CursorPos, pojav_environ->isInputReady, (void*)pojav_environ->GLFW_invoke_CursorEnter, pojav_environ->isCursorEntered);
+    FLOGI("[DIAG] critical_send_cp: x=%.0f y=%.0f savedW=%d savedH=%d invoke=%p ready=%d enter_invoke=%p entered=%d", x, y, pojav_environ->savedWidth, pojav_environ->savedHeight, (void*)pojav_environ->GLFW_invoke_CursorPos, pojav_environ->isInputReady, (void*)pojav_environ->GLFW_invoke_CursorEnter, pojav_environ->isCursorEntered);
 #ifdef DEBUG
     LOGD("Sending cursor position \n");
 #endif
@@ -768,11 +777,11 @@ void noncritical_send_key(__attribute__((unused)) JNIEnv* env, __attribute__((un
 
 void critical_send_mouse_button(jint button, jint action, jint mods) {
     if (pojav_environ->GLFW_invoke_MouseButton && pojav_environ->isInputReady) {
-        LOGI("[DIAG] critical_send_mb: invoke=%p ready=%d showWin=%lx mainBundle=%p",
-             pojav_environ->GLFW_invoke_MouseButton,
-             pojav_environ->isInputReady,
-             pojav_environ->showingWindow,
-             pojav_environ->mainWindowBundle);
+        FLOGI("[DIAG] critical_send_mb: invoke=%p ready=%d showWin=%lx mainBundle=%p",
+              pojav_environ->GLFW_invoke_MouseButton,
+              pojav_environ->isInputReady,
+              pojav_environ->showingWindow,
+              pojav_environ->mainWindowBundle);
 
         if (pojav_environ->GLFW_invoke_MouseButton && pojav_environ->isInputReady) {
             if (pojav_environ->isUseStackQueueCall) {

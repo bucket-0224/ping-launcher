@@ -291,6 +291,9 @@ int pojavInitOpenGL() {
                 setenv("allow_glsl_extension_directive_midshader", "true", 1);
             if (!getenv("MESA_LOADER_DRIVER_OVERRIDE"))  setenv("MESA_LOADER_DRIVER_OVERRIDE", "zink", 1);
             set_osm_bridge_tbl();
+            setenv("MESA_GL_MAX_TEXTURE_SIZE", "4096", 1);  // 또는 2048
+
+
             printf("OpenGL: set_osm_bridge_tbl() done (Zink path)\n");
 
             set_osm_bridge_tbl();
@@ -445,4 +448,3 @@ Java_org_lwjgl_vulkan_VK_getVulkanDriverHandle(ABI_COMPAT JNIEnv *env, ABI_COMPA
 EXTERNAL_API void pojavSwapInterval(int interval) {
     br_swap_interval(interval);
 }
-
